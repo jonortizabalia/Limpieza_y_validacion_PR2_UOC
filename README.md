@@ -17,7 +17,7 @@ Práctica 2 (Limpieza y validación de datos) enmarcada dentro de la asignatura 
 
 * El objetivo del proyecto ha sido generar un modelo de regresión lineal múltiple para predecir el valor de la variable *revenue* a partir de una serie de variables explicativas seleccionadas de entre las 23 variables originales existentes en el fichero de datos fuente, *train.csv*. 
 
-`Nota. Aunque, como se ha mencionado, el dataset elegido se enmarca en una competición vigente de Kaggle compuesta por 2 ficheros de datos, uno de entrenamiento (train.csv) y otro de test (test.csv) para evaluar la competición, nosotros hemos utilizado exclusivamente el primero y obvido este segundo, *test.csv*, por 2 razones principales.Por un lado porque desconocemos los resultados asociados a dicho fichero y no podríamos contrastar la calidad de nuestro modelo y por otro lado porque consideramos que excedía el contexto del presente trabajo.`
+`Nota. Aunque, como se ha mencionado, el dataset elegido se enmarca en una competición vigente de Kaggle compuesta por 2 ficheros de datos, uno de entrenamiento (train.csv) y otro de test (test.csv) para evaluar la competición, nosotros hemos utilizado exclusivamente el primero y obviado este segundo, *test.csv*, por 2 razones principales. Por un lado, porque desconocemos los resultados asociados a dicho fichero y no podríamos contrastar la calidad de nuestro modelo y por otro, porque consideramos que excedía el contexto del presente trabajo.`
 
 ## Recursos
 
