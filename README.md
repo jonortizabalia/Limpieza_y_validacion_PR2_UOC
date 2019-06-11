@@ -8,7 +8,7 @@ Práctica 2 (Limpieza y validación de datos) enmarcada dentro de la asignatura 
 
 ## Ficheros
 
-- **PRA2_Tipologia.rmd**: código del proyecto en fomrato R Markdown.
+- **PRA2_Tipologia.rmd**: código del proyecto en formato R Markdown.
 - **train.csv**: fichero csv con los datos originales obtenidos a partir de *Kaggle*
 - **trainout.csv**: fichero csv con los datos limpios y transformados
 - **PRA2_Tipologia.pdf**: documento pdf del proyecto incluyendo las respuestas a las preguntas planteadas en el enunciado
