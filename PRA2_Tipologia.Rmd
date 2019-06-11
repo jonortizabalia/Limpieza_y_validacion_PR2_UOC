@@ -1,0 +1,2740 @@
+---
+title: "PRAC2 Tipologia & Ciclo de Vida de Datos"
+author: "Jon Ortiz Abalia, Gabriel Peso Bañuelos"
+date: "11 de junio de 2019"
+always_allow_html: yes
+urlcolor: blue
+output:
+  pdf_document: 
+    toc: yes
+    toc_depth: 3
+    extra_dependencies: ["xcolor"]
+  word_document: default
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 3
+    toc_float: true
+    collapsed: false
+    smooth_scroll: false
+---
+
+```{r Librerias, include=FALSE}
+  knitr::opts_chunk$set(
+  echo = TRUE
+  ,warning = FALSE
+  ,message = FALSE
+  ,cache= TRUE
+  )
+
+
+# LIBRERIAS
+
+library(tidyverse)
+library(dplyr)
+library(fastDummies)
+library(reshape) # for cast()
+library(gridExtra)
+library(knitr) # for kable()
+library(kableExtra)
+library(VIM) # for aggr() 
+library(MASS) # for boxcox()
+library(corrplot)
+library(lemon) # for grid_arrange_shared_legend
+library(car) # for residual plots and leveneTest
+library(plyr) # for ldply()
+library(DescTools)
+
+```
+
+```{r Funciones, echo=F}
+
+###### DEFINICION de  FUNCIONES #######
+
+#La siguiente funcion permite sacar los listados totales de integranes para los campos "production_companies", "cast" o "crew"
+# Parámetros:
+#     x: (DataFrame) DataFrame de Analisis donde al menos una de las columnas debe ser una de las anteriores
+#     attr: (String) permite especificar cual de las columnas anteriores se analizará
+#                productora: "production_companies"
+#                equipo: "crew"
+#                reparto: "cast"
+#
+# (*) Estos son los listados que se guardarán en las variables generales "reparto", "productoras" y "equipo" donde se contabilizan el número de apariciones totales de cada uno de los integrantes
+# EJEMPLO: sacar_attr(NombreDataFrame,"reparto")
+
+sacar_attr<- function(x,attr){
+  
+  if (attr=="productora") { 
+    #Sacamos columna correspondiente a las productoras
+    pos=which(colnames(x)=="production_companies")
+  } else if(attr=="reparto") {
+    pos=which(colnames(x)=="cast")
+  } else if(attr=="equipo") {
+    pos=which(colnames(x)=="crew")
+  } else {
+    msg<-"La llamada a la funcion debe ser sacar_attr(NombreDataFrame,attr) siendo attr: productora|reparto|equipo"
+    return(msg)
+  }
+    
+  
+  
+  #patron de busqueda
+  patron<-"(?<=name\\'\\:\\s{1}\\')[\\w\\s-_(),.!¡]+(?=\\')"
+  
+  vacios<-length(which(is.na(x[,pos])))
+  
+  # Eliminanos del conteo aquellos registros cuyo campo de análisis es nulo
+  x<-x[!is.na(x[,pos]),]
+  
+  temp<-str_extract_all(x[,pos],patron )
+  
+  
+  nombre<-c(rep("VACIO",vacios))
+  for (fila in temp){
+    for (elem in fila){
+      nombre<-c(nombre,elem)
+    }
+  }
+  #Generamos un objeto tipo Table que nos permite ordenar los registros
+  nombre<-sort(table(nombre),decreasing=T)
+  # Generamos in dataframe
+  nombre<-data.frame(nombre)
+  
+  return(nombre)
+}
+
+# Funcion que utilizaremos para sacar el año de la fecha
+year<-function(fecha_estreno){
+  for (estreno in fecha_estreno){
+    anno<-as.integer(unlist(strsplit(estreno, "/", fixed = TRUE))[3])
+    anno<-ifelse(anno<20,anno+2000, anno+1900)
+  return(anno)
+  }
+}
+
+# Funcion que utilizaremos para sacar el mes de la fecha
+mes<-function(fecha_estreno){
+  for (estreno in fecha_estreno){
+    Meses<-c("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+             "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre")
+    month<-as.integer(unlist(strsplit(estreno, "/", fixed = TRUE))[1])
+    return(Meses[month])
+  }
+}
+
+#La siguiente funcion permite asignar a cada registro un valor en funcion de los
+# campos "production_companies", "cast" o "crew"
+# Parámetros:
+#     x: (DataFrame) DataFrame de Analisis donde al menos una de las columnas debe ser una de las anteriores
+#     attr: (String) permite especificar cual de las columnas anteriores se analizará
+#                productora: "production_companies"
+#                equipo: "crew"
+#                reparto: "cast"
+#    umbral. (Integer) Nos permita especificar el umbral de apariciones en el listado total(*)
+#            para que un registro se tenga en cuenta
+#    opt. Opcion de conteo.
+#         1: Devuelve 0/1 en funcion de que alguno de los integrantes supere el umbral
+#         2: Devuelve el numero de integrantes que superan el umbral
+#         3: Devuelve la suma de apariciones de todos los integrantes que superan el umbral
+#
+# (*) Los listados totales se refieren a las variables generales "reparto", "productoras" y 
+#     "equipo" donde se contabilizan el número de apariciones totales de cada uno de los integrantes
+# EJEMPLO: puntuacion_plus(NombreDataSet, "reparto",30,1)
+
+puntuacion_plus<- function(x,attr,umbral,opt){
+  
+  if (attr=="productora") { 
+    
+    #Sacamos columna correspondiente a las productoras
+    pos=which(colnames(x)=="production_companies")
+    ranking<-productoras
+    
+  } else if(attr=="reparto") {
+    pos=which(colnames(x)=="cast")
+    ranking<-reparto
+  } else if(attr=="equipo") {
+    pos=which(colnames(x)=="crew")
+    ranking<-equipo
+  } else {
+    msg<-"La llamada a la funcion debe ser puntuacion_plus(NombreDataFrame,attr) siendo attr: productora|reparto|equipo"
+    return(msg)
+  }
+  
+
+  #patron de busqueda
+  patron<-"(?<=name\\'\\:\\s{1}\\')[\\w\\s-_(),.!¡]+(?=\\')"
+  
+  temp2<-str_extract_all(x[,pos],patron )
+  
+  temp<-list()
+  for(fila in temp2) temp<-c(temp,list(unique(fila)))
+  #temp<-str_extract_all(x[,pos],patron )
+  #temp<-unique(temp[[1]])
+  
+  # DEBUG print(temp)
+  
+  popular_class<-c()
+  popular_num<-c()
+  popular_total<-c()
+  
+  
+  #DEBUG. print(paste("PELI:",x[,c("title")]))
+  for (fila in temp){
+    
+    #DEBUG print(paste("FILA:",fila))
+    clasificacion<-0
+    num<-0
+    total<-0
+    for (elem in fila){
+      # DEBUG. print(paste(attr,":", elem,":",fila,":"))
+      if (ranking$Freq[ranking$nombre==elem]>umbral) { 
+        # DEBUG print(paste(elem,":",ranking$Freq[ranking$nombre==elem]))
+        clasificacion<-1
+        num<-num+1
+        total<-total+ranking$Freq[ranking$nombre==elem]
+      }
+    }
+    popular_class<-c(popular_class, clasificacion)
+    popular_num<-c(popular_num, num)
+    popular_total<-c(popular_total, total)
+  }
+  
+  #DEBUG print(opt)
+  #DEBUG print(popular_class)
+  #DEBUG print(popular_num)
+  #DEBUG print(popular_total)
+  if (opt==1) {
+    return(popular_class)
+  } else if (opt==2) { 
+    return(popular_num) 
+  } else {
+    return(popular_total)
+  }
+  
+}
+
+# Dado un vector dibuja el histograma asociado y la distribución normal
+# Funcion que pinta el histograma de un vector con la Normal teórica asociada. Sirve para representar gráficamente los resultados que se pueden obtener numéricamente con el test de Shapiro.Wil
+
+# Forma de uso
+# plotn(x,main="Distribución normal") -> Grafico de x
+
+plotn <- function(x,main="Histograma de frecuencias \ny distribución normal",xlab="X",ylab="Densidad") {
+                  min <- min(x)
+                  max <- max(x)
+                  media <- mean(x)
+                  dt <- sd(x)
+                  hist(x,freq=F,main=main,xlab=xlab,ylab=ylab)
+                  curve(dnorm(x,media,dt), min, max,add = T,col="blue")
+}
+
+# Formula necesaria para realizar el BoxCox
+formula<- function(x, lambda) {
+  (x^lambda-1)/lambda
+}
+
+
+# Creamos una función para generar histogramas y boxplots
+ggplots<-function(dataframe, var1, var2, title1, title2){
+  g1<-ggplot(data = dataframe) +
+    geom_histogram(mapping=aes(x=var1), fill="royalblue", alpha=0.6, bins=50) +
+    labs(title=title1, x="") +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  g2<-ggplot(data = dataframe) +
+    geom_boxplot(mapping = aes(x = "", y = var1)) +
+    labs(x="", y=title1) 
+  
+  g3<-ggplot(data = dataframe) +
+    geom_histogram(mapping=aes(x=var2), fill="royalblue", alpha=0.6, bins=20) +
+    labs(title=title2, x="") +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  g4<-ggplot(data = clean_train) +
+    geom_boxplot(mapping = aes(x = "", y = var2)) +
+    labs(x="", y=title2) 
+  
+  grid.arrange(g1, g2, g3, g4, nrow=2, ncol=2)
+
+  }
+
+
+# Creamos una función para generar histogramas y boxplots sin variables Normalizadas
+ggplots2<-function(dataframe, var1, title1){
+  
+  g1<-ggplot(data = dataframe) +
+    geom_histogram(mapping=aes(x=var1), fill="royalblue", alpha=0.6, bins=50) +
+    labs(title=title1, x="") +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  g2<-ggplot(data = dataframe) +
+    geom_boxplot(mapping = aes(x = "", y = var1)) +
+    labs(x="", y=title1) 
+  
+  
+  grid.arrange(g1, g2, nrow=1, ncol=2)
+
+  }
+
+
+
+# Función para reprsentar un diagrama de tipo Scatter. Nube de puntos
+scatter<-function(datos, varX, varY, x, y) {
+  ggplot(data = datos, mapping = aes(x = varX, y = varY)) +
+  geom_jitter()+
+  labs(x=x, y=y)+
+  geom_smooth(se=FALSE)
+}
+
+# Función para representar diagramas de cajas o Boxplots
+boxplots<-function(dataframe, varX, xlab) {
+  ggplot(dataframe, aes(varX, revenue, fill=varX)) +
+    geom_boxplot()+
+    xlab(xlab)+
+    labs(fill=xlab)+
+  theme(axis.text.x=element_blank())
+}
+```
+
+<br/>
+
+***
+
+# 1. Descripción del dataset
+
+<br/>
+  
+**¿Por qué es importante y qué pregunta/problema pretende responder?**  
+  
+Nuestra primera práctica sobre *web scraping* la desarrollamos contra la web de venta de entaradas on-line "Atrapalo.com" con la idea de obtener un listado de todos los espectáculos a nivel nacional tanto en cartera actualmente como históricamente desde el momento que se empezaran a captar los datos.  
+  
+Nos hubiera gustado utilizar el *dataset* obtenido en dicha práctica para continuar con esta segunda  y haber podido plantear un ejercicio de regresión o previsión pero nos resultó dificil plantearlo por no disponer de los datos recuadatorios asociados a cada espectaculo ya que obviamente esa información no existía en la web scrappeada.  
+  
+Por este motivo hemos elegido otro conjunto de datos público que está muy relacionado y sí dispone de esta información y que, además, es objeto actualmente de un concurso en la plataforma **kaggle**, https://www.kaggle.com. El dataset de estudio consiste en un listado de películas en la que se citan diferentes atributos de las mismas junto a su recaudación en taquilla. 
+
+El **objetivo** del concurso es **plantear un modelo de regresión lineal que permita preveer la recaudación de una película futura en base al conocimiento de algunos de estos atributos**. 
+
+Concretamente la base de datos origen del concurso, se encuentre en https://www.kaggle.com/c/tmdb-box-office-prediction  y se compone de 2 datasets iniciales, uno de training y otro de test.En nuestro caso utilizaremos sólo el dataset de training, denominado 'train.csv', para inferir el modelo de regresión lineal y que será el objeto de este ejercicio. 
+ 
+```{r Variables,eval=T,echo=FALSE, message=FALSE, warning=FALSE}
+
+### AJUSTES de ENTORNO ####
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Definimos nombres de ficheros
+
+fichero<-"train.csv"
+fichero.out<-"trainOut.csv"
+
+# Definimos el directorio de trabajo
+ruta<-c("./")
+setwd(ruta)
+
+```
+
+
+```{r Prog PPal,eval=T,echo=FALSE, message=FALSE, warning=FALSE}
+## PROGRAMA PPAL
+
+# Loading files
+# Inspecionamos el formato del fichero visualmente y comprobamos que se encuentra en formato anglosajón: Decimales separados por punto, Campos separados por comas, etc. Por ello utilizaremos el comando: read.csv()
+
+train<-read.csv(fichero, encoding = "UTF-8", na.strings = c("", NA), stringsAsFactors = F)
+
+
+### VARIABLES GENERALES ####
+train_orig<-train #Hacemos una copia del datset original por si necesitamos recuperlo de nuevo más adelante
+clean_train<-train_orig  # Variable tipo dataset sobre la que iremos realizando las modificaciones necesarias
+columnas_orig<-colnames(train)
+
+# Conjunto de columnas que eliminaremos del dataset original
+col_eliminar<- c("homepage","imdb_id","original_title","overview","poster_path","production_countries","status","tagline","Keywords","spoken_languages")
+
+
+# Conjunto de columnas que nos llevaremos al fichero final fichero.out
+cols_out<-c("X.U.FEFF.id", "title", "collection", "english_speaking",
+                "budget", "budget_boxcox",
+                "popularity", "popularity_boxcox",
+                "runtime", 
+                "mes", "year", 
+                "productoras",
+                "reparto", 
+                "produccion", 
+                "revenue", "revenue_boxcox",
+                "Action", "Adventure", "Animation", "Comedy", "Crime", 
+                "Documentary", "Drama", "Family", "Fantasy", "Foreign",
+                "History", "Horror", "Music", "Mystery", "Romance", 
+                "Science_Fiction", "Thriller", "Tv_movie", "War", "Western") 
+
+
+# Nos quedamos con el listado de variables que anlizaremos de cara al model de regresión final.
+
+train_subset<-train[,c("X.U.FEFF.id",
+                "belongs_to_collection",
+                "budget",
+                "genres",
+                "original_language",
+                "popularity",
+                "production_companies",
+                "release_date", 
+                "runtime",
+                "title", 
+                "crew",
+                "cast",
+                "revenue")]
+
+
+columnas_subset<-colnames(train_subset)
+
+```
+
+<br/>
+
+# 2. Selección de los datos de interés a analizar.  
+
+En primer lugar  inspecionamos el formato del fichero `r fichero` visualmente y comprobamos que se encuentra en formato anglosajón: Decimales separados por punto, campos separados por comas, etc por lo que podemos cargarlo con el comando: read.csv(). 
+  
+Una primera revisión nos indica que se trata de un dataset con las siguientes dimensiones. 
+  
+
+    + Filas: `r nrow(train_orig)` registros
+    + Columnas: `r ncol(train_orig)` variables  
+      
+Cuyas variables son las siguientes: 
+  
+  
+1. **X.U.FEFF.id.**: Id asociado a la película.
+2. **belongs_to_collection**: Indica si la variable pertenece o  no a una saga.
+3. **budget**: Presupuesto invertido en la película (en dólares).
+4. **genres**: Género(s) de la película.  (Nota. Una película puede estar catalogada como más de un género)
+5. **homepage**:  Página web de la película  
+6. **imdb_id**:   Id de la película en la página web de IMDB (<https://www.imdb.com/>)
+7. **original_language**: Idioma original de la película.
+8. **original_title**:    Título original de la película.  
+9. **overview**:        Resumen de la película  
+10. **popularity**:   Popularidad de la película en base a UN algoritmo interno creado por la página web de TMDB <https://www.themoviedb.org/?language=en-US>.
+11. **poster_path**:     Página donde podemos visualizar el cartel oficial de la película:  <https://www.themoviedb.org/?language=en-US.> 
+12. **production_companies**:  Listado de las productoras que han particpado en la grabación de la película 13. **production_countries**:  Paises que participan en la producción de una película
+14. **release_date**:     Variable donde se indica la fecha de estreno de la película. 
+15. **runtime**:           Duración de la película  (en minutos).
+16. **spoken_languages**:  Idiomas a los que se ha traducido la película  
+17. **status**:            Situación en la que se encuentra una pelicula  
+18. **tagline**:        ¿?
+19. **title**:          Título de la película  
+20. **Keywords**:       Palabras asociadas a la película
+21. **cast**: Variable en formato json donde se listan las personas del reparto.
+22. **crew**: Variable en formato json donde se listan las personas del equipo de l película. 
+23. **revenue**: Beneficio obtenido con la película (en dólares).  
+  
+Recordemos que el objetivo será plantear un modelo de regresión para la variable depeniente, **revenue**, en función de otras independientes y que tendremos que determinar. 
+
+Observamos que uno de los atributos de las películas es **status** y que los valores posibles de esta variable son: `r unique(train_orig$status)`. Es decir aquellas ya estrenadas: `Released` y aquellas todavía en previsión: `Rumored`.
+
+Entre estas últimas vemos que hay 4 películas que no tendremos en cuenta y que descartaremos del listado inicial puesto que los datos se basan obviamente en valores estimados y no reales:   
+  
+```{r Rumoured, echo=F, eval=T}
+
+# Mostramos las 4 películas sin estrenar
+clean_train[clean_train$status=="Rumored",c("title","status","budget")]
+
+# Eliminamos los 4 registros 
+clean_train<-clean_train[!(clean_train$status =="Rumored"),]
+
+# Actualizo el número de las filas
+rownames(clean_train)<-seq(length=nrow(clean_train))
+
+```
+
+Eliminamos pues los 4 registros y nos quedamos con **`r nrow(clean_train)`** registros del listado original.
+
+Una vez realizado este primer análisis de las variables existentes y de la estimación del posible impacto que cada una de ellas podría tener sobre el potencial beneficio  de la  película (**revenue**) procedemos a descartar, por sentido común,  algunas de ellas que consideramos más irrelevantes como **homepage**, **original_title** etc etc.
+
+Nos quedaremos para el análisis del ejercicio únicamente con aquellas que consideramos, a priori, más correlacionadas con la variable buscada y que serían las siguientes:  
+
+```{r Clean columns, echo=F}
+clean_train<-dplyr::select(clean_train, -col_eliminar)
+```
+
++ "X.U.FEFF.id"  
++ "belongs_to_collection" 
++ "budget"
++ "genres"
++ "original_language"
++ "popularity"
++ "production_companies"
++ "release_date"
++ "runtime"
++ "title"
++ "cast"
++ "crew"
++ "revenue"              
+  
+`Nota. Los atributos 'X.U.FEFF.id' y 'title' no se consideran relavantes para el ejercicio de regresión posterior pero nos servirán para identificar unívocamente a cada película dentro del dataset`
+
+De esta forma nos quedaremos con un dataset de análisis con las siguientes dimensiones:  
+  
+    + Filas: `r nrow(train_subset)-4` registros
+    + Columnas: `r ncol(train_subset)` variables  
+
+Una vez elegidas mostramos un primer resumen del contenido de las variables de análisis 
+```{r Glimpse,echo=F}
+# Mostramos un resumen de las variables que integran el subset
+glimpse(train_subset)
+```
+Observación:  
+  
+Las variables: 
+  
++ **belongs_to_collection**
++ **genres**
++ **production_companies**
++ **cast**
++ **crew**  
+  
+se encuentran en formato JSON y no resultan muy intuitivas visualmente.   
+Para dar una idea de la estructura de estas variables vamos a mostrar el valor de cada una de ellas referentes al primer registro del dataset.  
+
+***belongs_to_collection***
+```{r Ejemplo_Collections, echo=F}
+a<-train_subset[9,c("belongs_to_collection")]
+b<-kable_styling(kable(data.frame(Registro.num.9=a)))
+row_spec(column_spec(b,column=1, width='12cm'), row=0, bold=T)
+``` 
+En esta variable se recoge información de la saga ('collection') a la que pertenece cada película.
+
+***genres***
+```{r Ejemplo_Genres, echo=F}
+
+a2<-train_subset[9,c("genres")]
+b2<-kable_styling(kable(data.frame(Registro.num.9=a2)))
+row_spec(column_spec(b2,column=1, width='12cm'), row=0, bold=T)
+```
+  
+Se aprecia que a la película se le asocian varios géneros: `Action`, `Comedy`,`Music`,`Family` y `Adventure`.  
+
+`Nota: Obviamente cada pelicula puede tener ó no una clasificación de género asociada y ésta pueder ser múltiple ó no`  
+
+***cast***
+```{r Ejemplo_Cast, echo=F}
+a3<-train_subset[9,c("cast")]
+b3<-kable_styling(kable(data.frame(Registro.num.9=a3)), font_size=8)
+row_spec(column_spec(b3,column=1, width='12cm'), row=0, bold=T)
+``` 
+  
+Se aprecia que esta variable tiene un formato complejo puesto que sintetiza el reparto completo de cada película indicando datos del personaje, actor/actriz que lo interpreta etc etc.  
+
+***crew***
+```{r Ejemplo_Crew, echo=F}
+a4<-train_subset[9,c("crew")]
+b4<-kable_styling(kable(data.frame(Registro.num.9=a4)), font_size=8)
+row_spec(column_spec(b4,column=1, width='12cm'), row=0, bold=T)
+```
+  
+Variable similar a la anterior pero referente al equipo de producción y así desglosa por cada película, los diferentes técnicos implicados junto a su role en la misma: `Director`, `Productor`, `Compositor` etc etc.  
+  
+`Nota. El desglose de roles asociados (jobs) es exhaustiva por película`
+  
+Conclusión: Se observa que se trata de variables relevantes para el análisis de regresión (es de suponer que el reparto de una película puede influir en su éxito comercial ó no) , pero que teniendo en cuenta su formato original no son muy explotables originalmente por lo que tendremos que plantear algún tipo de transformación que se detallará más adelante.
+  
+
+Respecto al resto de variables numéricas y para hacernos una idea de la estructura y formato de las mismas  mostramos las 2 primeras filas del dataset .    
+  
+`Nota. De este listado se han omitido las anteriores 'json' pra facilitar la visualización`
+  
+
+``` {r Ejemplo_Primera_linea, echo=F}
+head(dplyr::select(train_subset, -c("belongs_to_collection",
+                                    "genres",
+                                    "production_companies",
+                                    "cast",
+                                    "crew")),2)
+
+```
+
+
+Pasamos a continuación a analizar más en detalle cada una de estas variables independientes para ver si necesitan o no limpieza de datos y  analizar más en detalle su potencial real para el modelo de regresión lineal sobre la variable 'revenue'. 
+
+<br/>
+
+# 3. Limpieza de los datos
+## 3.1. Valores Cero - Nulos
+ 
+**Valores Nulos**  
+
+<br/>
+
+Identificamos qué variables de las seleccionadas presentan valores vacíos ó nulos para ver la calidad de los datos existentes.
+
+```{r Vacios_Nulos, echo=FALSE}
+
+sapply(clean_train, function(x) sum(is.na(x)))
+
+aggr(clean_train, col = c("skyblue", "red"), prop=FALSE, numbers=TRUE,
+             cex.numbers=1, cex.axis=0.6, sortVars=TRUE,
+             ylab = c("NA histogram", "Patron"), gap=2, oma = c(7,2,1,1))
+
+```
+  
+
+<br/>
+
+Observamos que la variable con más valores vacíos es **belongs_to_collection** con **`r sum(is.na(clean_train$belongs_to_collection))`** casos, seguida de **production_companies** con **`r sum(is.na(clean_train$production_companies))`** casos.   
+
+En el caso de **belongs_to_collection** es normal encontrar valores vacíos ya que se trataría de todas aquellas películas que no pertenecen a ninguna colección (o saga), es decir que serán valores nulos.  
+  
+Mientras que en el caso de **production_companies**, **genres**, **crew** y **runtime** se tratará de valores perdidos ó "NA".  
+  
+**Valores Cero**
+
+Veamos  a continuación la existencia de los valores "0" en las variables numéricas para ver si éstos son coherentes con su naturaleza ó no.  
+
+Si su existencia estuviera dentro de lo posible, no haríamos cambios mientras que si no fuera posible, habría que transformar los valores a "NA".  
+  
+```{r Variables_Numericas, echo=FALSE}
+
+# Revisamos los valores que adquieren las variables numéricas
+
+quant.vars<-clean_train[c('budget', 'popularity', 'runtime', 'revenue')]
+summary(quant.vars)
+
+# Contamos el número de casos con valores = "0"
+
+budget.zero<-nrow(clean_train[which(clean_train$budget==0),])
+
+pop.zero<-nrow(clean_train[which(clean_train$popularity<0.0001),])
+pop.min<-min(clean_train$popularity)
+
+runtime.zero<-nrow(clean_train[which(clean_train$runtime==0),])
+
+```
+  
+<br/>
+
+Observamos que existen valores "0" en las variables **budget** (concretamente **`r budget.zero`** casos) y **runtime** (con **`r runtime.zero`**) para los cuales no es un valor muy coherente (*).
+
+En el caso de  **popularity**, llama la atención que el valor mínimo no es "0" sino **`r pop.min`**. Existen concretamente **`r nrow(clean_train[which(clean_train$popularity<0.01),])`** casos en los que el valor es menor de 0.01, no obstante, por tratarse de un valor numérico legítimo no le aplicaremos ninguna corrección.
+
+
+`(*) Nota: Según lo explicado en: <https://www.themoviedb.org/talk/5ba87d119251412f0103e87b> si budget="0" querrá decir que los datos aún no están registrados, con lo cual habría que modificar los valores a "NA". Idem para la variable 'runtime'.`
+
+## 3.2. Tratamiento de valores extremos I (*outliers*)
+
+Este estudio de valores extremos se hará en dos fases diferentes. 
+
+1. Una primera, en este punto, en el que se identificarán inicialmente los valores extremos considerados incorrectos. 
+2. Otra segunda, más adelante en el apartado de Análisis de Datos (`Apartado 4.2.3 `), cuando se identifiquen valores extremos en variables numéricas normalizadas mediante el método de $mean\pm 3SD$.  
+  
+Se observa la presencia de valores anormalmente  bajos en las variables **budget** y **revenue**.  
+Cotejando con el foro tanto de la competición de Kaggle,   (<https://www.kaggle.com/c/tmdb-box-office-prediction/discussion>), como de TMDB,  (<https://www.themoviedb.org/talk?language=ca-ES>), descubrimos que existen los siguientes problemas con ciertos valores de dichas variables:
+
++ Valores con unidades dispares en **budget** y **revenue**. Algunos valores muy bajos han de multiplicarse por 1 millón
+
++ Valores inconsistentes en **revenue**. Hay ciertos valores que recogen la recaudación sólo de "US & Canada" mientras que la gran mayoría recoge la recaudación internacional ("Worldwide").
+
+La solución que planteamos ante este problema es fijar unos umbrales por encima de los cuales podemos considerar los valores correctos. Tras revisar las discusiones al respecto en las páginas web mencionadas anteriormente, decidimos fijar el umbral de **budget** en 1000 USD y el de **revenue** en 75.000 USD. 
+
+Contabilizamos el número de registros con valores anormalmente bajos y obtenemos los siguientes resultados:
+
+```{r  Limpieza_Budget, echo=FALSE}
+
+# Registros con budget < 1000 USD
+vlow.budget<-nrow(clean_train[which(clean_train$budget > 0 & clean_train$budget< 1000),])
+
+# Registros con revenue < 75.000 USD
+vlow.revenue<-nrow(clean_train[which(clean_train$revenue < 75000),])
+
+# Registros con budget < 1000 USD y revenue < 75.000 USD
+vlow.values<-nrow(clean_train[which(clean_train$budget > 0 & clean_train$budget< 1000 & clean_train$revenue < 75000),])
+
+```
+
+Observamos que hay **`r vlow.budget`** registros con valores inferiores al umbral de 1000 USD de **budget** mientras que hay **`r vlow.revenue`** registros con valores inferiores a 75.000 USD de **revenue**. De dichos registros, **`r vlow.values`** películas, presentan valores inferiores a los umbrales en ambas variables.  
+  
+
+## 3.3. Primeras conclusiones tras el análisis inicial
+
+Después de este análisis preliminar llegamos a las siguientes conclusiones sobre las acciones necesarias de limpieza y transformación que tendremos que realizar sobre cada una de las variables independientes elegidas:
+
+1. **belongs_to_collection**. Extraeremos la información de si pertenece o no a una saga y crearemos una nueva variable dicotómica con dicha información a la que llamaremos **collection**. (`Necesita Transformación`)
+
+2. **budget**. Transformaremos a "NA" tanto los **`r budget.zero`** valores "0" como aquellos **`r vlow.budget`** valores por debajo del umbral de 1000 USD. (`(Necesita gestión de nulos`)
+
+3. **genres**. Nos interesa extraer los géneros asociados a cada película. (`Necesita Transformación`)
+
+4. **original_language**. Nos interesa crear una nueva variable dicotómica a la que llamaremos **english_speaking** en función de si el idioma original es "english" ("yes") u otro ("no")  (`Necesita Transformación`)
+
+5. **runtime**. Imputaremos los **`r runtime.zero`** valores "0" y los **`r length(which(is.na(train_orig$runtime)))`** nulos. (`Necesita gestión de nulos`)
+
+6. **release_date**. Vamos a generar 2 nuevas variables referentes al mes (**mes**) y año (**year**) de lanzamiento de cada película para intentar establecer alguna correlación entre éstos y el posible revenue de la misma.    (`Necesita Transformación`)
+
+7. **crew**.  Se analiza en detalle más adelante para asociar a esta variable `json` un valor numérico . (`Necesita Transformación`)
+
+8. **cast**. Idem al anterior.  (`Necesita Transformación`)
+
+9. **production_companies**. Idem al anterior.  (`Necesita Transformación`)
+
+10. **revenue**. Eliminaremos los registros correspondientes a los **`r vlow.revenue`** casos con valores por debajo del umbral de 75.000 USD. (`Necesita gestión de nulos`)
+
+11. **popularity**. Valor numérico correcto (`NO Necesita tratamiento`)
+
+12. **title**. Atributo literal que funciona como ID de la película y que no se utilizará en la regresión (`NO Necesita tratamiento`)
+
+## 3.4. Transformaciones y Tratamiento de las variables iniciales  
+
+
++ ***belongs_to_collection***
+
+
+Como se ha mencionado anteriormente crearemos una nueva variable dicotómica llamada **collection** que recoja los valores "Yes"/"No" dependiendo de que el registro pertenezca o no a una saga, respectivamente.
+
+Observamos que sólo en aquellas películas que pertenecen a una colección (o saga) tienen información presente en la variable **belongs_to_collection** mientras que el resto de películas tienen valores vacíos.
+
+Por lo tanto creamos una nueva variable **collection** y enseñamos los primeros registros a modo de ejemplo:
+
+```{r Collection,echo=F}
+
+clean_train$collection<-ifelse(is.na(clean_train$belongs_to_collection),"No","Yes")
+
+clean_train$collection<-as.factor(clean_train$collection)
+
+column_spec(kable_styling(kable(data.frame(title=clean_train[1:5,"title"], belongs_to_collection=clean_train[1:5,"belongs_to_collection"], collection=clean_train[1:5,"collection"])), font_size=9),column=2, width='7cm')
+
+```
+
+
++ ***genres***
+
+```{r Genres, eval=T, echo=F, warning=F, message=F}
+
+df<-as.character(clean_train$genre)
+
+# Sacar el máximo número de géneros que puede tener una sola película
+
+genreCount <- str_count(df, "\\}")
+numberOfSplitCols <- max(na.omit(genreCount))
+
+# Hacer split de los géneros de cada película en diferentes columnas
+
+genreSplit<-as.data.frame(str_split_fixed(df, "\\},", numberOfSplitCols), stringsAsFactors = F)
+
+# Extraer el nombre de cada género y crear un nuevo dataframe llamado "genreNames"
+
+genreNames<-as.data.frame(sapply(genreSplit, function(x) str_extract(x, "(?<=name\\'\\:\\s{1}\\').+(?=\\')")), stringsAsFactors = F)
+genreNames[is.na(genreNames)] <- ""
+
+# Añadimos nueva columna "ID" para identificar cada película
+
+genreNames <- cbind(clean_train[1], genreNames)
+colnames(genreNames)[colnames(genreNames)=="X.U.FEFF.id"]<-"ID"
+
+# Uso de melt() and cast() para obtener el formato deseado de tabla
+
+md<-melt(genreNames, id="ID")
+cst<-cast(md, ID~value)
+
+# Subset las columnas deseadas
+
+bin_genre<-cst[,3:ncol(cst)]
+```
+
+Observamos que una misma película puede estar clasificada como diferentes géneros.  
+
+Vamos a proceder  a determinar cuántos posibles géneros de película hay y cuántas películas hay asociadas a cada uno de ellos.
+
+```{r Genres2,eval=T,echo=F}
+
+genre.table<-(sort(table(md$value), decreasing= T))
+genre.df<-data.frame(genre.table)
+genre.df<-genre.df[-1,]
+rownames(genre.df)<-seq(length=nrow(genre.df))
+colnames(genre.df)[1]<-"Genres"
+
+drama<-genre.df$Freq[which(genre.df$Genres=='Drama')]
+comedia<-genre.df$Freq[which(genre.df$Genres=='Comedy')]
+
+```
+
+<br/>
+
+Observamos que hay **`r nrow(genre.df)`** géneros diferentes  y que el género más frecuente entre las películas es el de "Drama" (**`r drama`** películas) seguido de comedia (**`r comedia`** películas).  
+  
+`Nota. Concretamente los géneros son: "Drama", "Comedy", "Thriller", "Action", "Romance", "Crime", "Adventure", "Horror", "Science_Fiction", "Family", "Fantasy", "Mystery", "Animation", "History", "Music", "War", "Documentary", "Western", "Foreign", "Tv_movie"`
+
+Al haber registros que cuentan con múltiples valores de género, nos convendrá crear 20 variables nuevas con los distintos géneros y binarizar así la información.
+
+Veamos cómo quedaría la transformación una vez realizado este proceso y mostramos los primeros registros:
+
+```{r Genres3,eval=T,echo=F, warning=F}
+
+clean_train<-cbind(clean_train, bin_genre)
+
+# Cambiar el nombre de las variables que tienen un espacio dentro
+
+colnames(clean_train)[colnames(clean_train)=="Science Fiction"] <- "Science_Fiction"
+colnames(clean_train)[colnames(clean_train)=="TV Movie"] <- "Tv_movie"
+
+# Reasignar las variables de género como factores
+
+clean_train[,c("Drama","Comedy","Thriller","Action","Romance",
+
+         "Crime","Adventure","Horror","Science_Fiction","Family",
+
+         "Fantasy","Mystery","Animation","History","Music","War",
+
+         "Documentary","Western","Foreign","Tv_movie")]<-lapply(clean_train[,c("Drama","Comedy","Thriller","Action","Romance",
+
+         "Crime","Adventure","Horror","Science_Fiction","Family",
+
+         "Fantasy","Mystery","Animation","History","Music","War",
+
+         "Documentary","Western","Foreign","Tv_movie")], factor)
+
+
+column_spec(kable_styling(kable(data.frame(title=clean_train[1:2,"title"], genre=clean_train[1:2,"genres"], clean_train[1:2,c("Drama","Comedy","Thriller","Action","Romance",
+
+         "Crime","Adventure","Horror","Science_Fiction")])),latex_options="scale_down"), column=c(1,2), width='5cm')
+
+kable_styling(kable(data.frame(clean_train[1:2,c("Family",
+
+         "Fantasy","Mystery","Animation","History","Music","War",
+
+         "Documentary","Western","Foreign","Tv_movie")])),latex_options="scale_down", font_size=6)
+
+
+```
+
+<br/>
+
+Podemos observar que la película *Hot Tub Machine 2* está asociada exclusivamente al género "Comedy" en la variable **genres** y confirmamos, efectivamente, que la única columna donde hay un valor "1" es efectivamente la de "Comedy".
+
+En cuanto a la siguiente película, *The Princess diaries 2: Royal Engagement*, observamos que está asociada a múltiples géneros: "Comedy", "Drama", "Family" y "Romance". Confirmamos que la binarización se ha realizado correctamente ya que las únicas columnas con valor "1" corresponden a dichos 4 géneros.  
+  
++ ***original_language***
+
+Analizamos los distintos idiomas originales (con sus frecuencias) presentes en la variable **original_language** y ordenamos de mayor a menor.
+
+```{r Language,eval=TRUE,echo=F}
+
+sort(table(clean_train$original_language), decreasing=T)
+
+```
+
+Podemos observar que la gran mayoría de películas están rodadas en inglés. Crearemos pues una nueva variable dicotómica llamada **english_speaking** que recoja la información de si el idioma original de una película es el inglés ("Yes") u otro ("No").
+
+<br/>
+
+```{r Language2,echo=F}
+
+english_speaking<-list()
+
+for(i in 1:length(clean_train$original_language)){
+  if(clean_train$original_language[i]=="en"){
+    english_speaking[i]<-"Yes"
+  } else {
+    english_speaking[i]<-"No"
+  }
+}
+
+english_speaking<-as.data.frame(unlist(english_speaking))
+colnames(english_speaking)<-"english_speaking"
+```
+
+```{r Language3,eval=TRUE,echo=F}
+clean_train<-cbind(clean_train, english_speaking)
+
+kable(data.frame(title=clean_train[1:5,"title"], original_language=clean_train[1:5,"original_language"], english_speaking=clean_train[1:5,"english_speaking"]))
+
+```
+
+<br/>  
+  
++ ***budget***
+
+```{r Budget,echo=F}
+
+# Convertimos valores "0" a "NA"
+
+clean_train$budget[which(clean_train$budget==0)]<-NA
+
+# Convertimos los valores pode bajo del umbral de 1000 USD a "NA"
+
+clean_train$budget[which(clean_train$budget<1000)]<-NA
+
+```
+Transformamos los **`r budget.zero`** valores "0" en "NA" y además transformamos los **`r vlow.budget`** valores por debajo del umbral de 1000 USD a "NA". De esta forma finalmente obtenemos `r sum(is.na(clean_train$budget))` valores nulos.
+
+Habría múltiples posibilidades de gestionar estos valores nulos como:  
+  
++ Eliminar la variable 'budget' de cara al modelo de regresión pero sospechamos que ésta será una de las variables que más peso tenga en el mismo.  
+
++ Eliminar estos `r sum(is.na(clean_train$budget))` registros con valor nulo del dataset de entenamiento del modelo  
+
++ Intentar reasignar estos valores nulos eligiendo aleatorimente otros valores de 'budget' existentes en el dataset. 
+
++ Intentar inferir estos valores con algún algoritmo como el de los k-vecinos más cercanos, que suele tener buenos resultados incluso cuando el porcentaje de valores ausentes es alto respecto al número de registros totales.  
+  
+`Nota. Previo a decantarnos por una opción se consultó con la profesora, quien nos asesoró elegir esta última opción` 
+
+<br/>
+
+Finalmente procedemos, entonces, a imputar los **`r sum(is.na(clean_train$budget))`** nulos usando la técnica de los k-vecinos más próximos (**KNN-imputation**) mediante la función `kNN()` de la `library(VIM)`. 
+
+```{r Budget1, echo=FALSE, warning=F}
+
+# Guardamos en una variable los registros nulos
+
+budget.na<-clean_train[which(is.na(clean_train$budget)),][c('X.U.FEFF.id','title','budget')]
+rownames(budget.na)<-c()
+
+# Hacemos la imputación de los valores perdidos utilizando la función kNN() de la librería VIM
+
+clean_train<-kNN(clean_train, variable="budget", dist_var=c("runtime", "popularity", "collection","english_speaking", "Drama","Comedy","Thriller","Action","Romance","Crime","Adventure","Horror","Science_Fiction","Family", "Fantasy","Mystery","Animation","History","Music","War", "Documentary","Western","Foreign","Tv_movie"), k = 5)
+
+# Compruebo que se haya realizado correctamente
+#sum(is.na(clean_train$budget))
+
+# Guardamos los valores imputados en una variable
+budget.imp<-clean_train$budget[which(clean_train$budget_imp==TRUE)]
+
+# Confirmamos que se han imputado correctamente algunos valores
+kable_styling(kable(head(data.frame(budget.na, budget_imput=budget.imp))))
+
+```
+
+<br/>
+
+***runtime***
+
+Al igual que en el caso anterior imputamos los `r runtime.zero` valores "0" y los `r nrow(is.na(train_orig$runtime))` nulos mediante los k-vecinos más próximos (**KNN-imputation**) por medio de la función kNN() de la library(VIM).
+
+
+```{r RunTime,echo=F, warning=F}
+
+# Primero transformo los valores "0" en "NA"
+
+clean_train$runtime[which(clean_train$runtime=="0")]<-NA
+
+# Compruebo el número de valores "NA"
+#sum(is.na(clean_train$runtime))
+
+# Guardo en una variable los registros nulos
+runtime.na<-clean_train[which(is.na(clean_train$runtime)),][c('X.U.FEFF.id','runtime')]
+rownames(runtime.na)<-c()
+
+# Hago la imputación de los valores perdidos utilizando la función kNN() de la librería VIM
+
+clean_train<-kNN(clean_train, variable=c("runtime"), dist_var=c("budget", "popularity", "collection", "english_speaking", "Drama","Comedy","Thriller","Action","Romance","Crime","Adventure","Horror","Science_Fiction","Family",
+"Fantasy","Mystery","Animation","History","Music","War","Documentary","Western","Foreign","Tv_movie"), k = 5)
+
+# Compruebo que se haya realizado correctamente
+#sum(is.na(clean_train$runtime))
+
+# Guardo los valores imputados en una variable
+runtime.imp<-clean_train$runtime[which(clean_train$runtime_imp==TRUE)]
+
+#Mostramos tabla
+kable_styling(kable(data.frame(runtime.na, runtime_imput=runtime.imp)))
+```
+
+
+<br/>  
+
+***revenue***
+
+Eliminamos los registros correspondientes a los **`r vlow.revenue`** casos con valores por debajo del umbral de 75.000 USD.
+
+```{r Revenue,echo=F}
+
+clean_train<-clean_train[!(clean_train$revenue < 75000),]
+rownames(clean_train)<-seq(length=nrow(clean_train))
+
+```
+
+<br/> 
+
+Nos quedamos con `r nrow(clean_train)` registros después de haber eliminado `r nrow(train_orig)-nrow(clean_train)` filas.
+
+
+***release_date*** 
+  
+Tal y como se ha comentado anteriormente vamos a generar 2 nuevas variables a partir de la la fecha de estreno:  **mes** y **year** (*) y que utilizaremos para ver si son significativas para la regresión del beneficio.  
+  
+`(*) Nota. Estas 2 nuevas variables las hemos generado mediante sendas funciones que se encuentran definidas en el código`  
+  
+Mostramos como quedan los primeros resgistros del *dataset* una vez aplicadas:
+
+```{r Fecha,eval=T,echo=F}
+
+## Variable RELEASE_DATE
+
+train.test<-subset(clean_train,select=c("title","revenue","release_date"))
+clean_train$mes<-sapply(train.test[,c("release_date")],mes)
+clean_train$mes<-as.factor(clean_train$mes)
+clean_train$year<-sapply(train.test[,c("release_date")],year)
+#DEBUG head(clean_train[1:10,c("title","release_date", "Mes","Year")])
+
+kable_styling(kable(data.frame("title"=clean_train$title[1:5],
+                 "Release"=clean_train$release_date[1:5],
+                 "mes"=clean_train$mes[1:5],
+                 "year"=clean_train$year[1:5])))
+
+```
+
+```{r Ranking, echo=F}
+
+productoras<-sacar_attr(train,"productora")     # Productoras
+reparto<-sacar_attr(train,"reparto")            # Reparto
+equipo<-sacar_attr(train,"equipo")              # Equipo
+
+```
+
+***production_companies***
+  
+Como ya se ha visto nos interesa sacar información numérica o categórica de la variables descriptiva  **production_companies** para poder analizar si los nombres de las productoras son significativas para el posible 'revenue' de la película.  
+  
+Para ello intentaremos transformar esta variable descriptiva en una variable numérica cuyo peso ó nivel de significación se establecerá en función de la importancia de cada productora en el ranking total de productoras según su número de producciones. Para explicarlo vamos a utilizar un ejemplo. 
+
+Previamente sacaremos el listado de todas las productoras que se referencian en el conjunto de datos junto al número de producciones de cada una de ellas lo que nos permitirá generar un ranking de las mismas. 
+
+`Nota: Para realizar este cálculo se ha definido una función específica sacar_attr() que extrae los valores de los campos json.`  
+  
+Así obtenemos un listado de **`r nrow(productoras)`** productoras en total. A continuación mostramos la tabla de productoras junto con el número de producciones de cada una de ellas.
+``` {r Productoras, echo=F}
+sort(table(productoras$Freq), decreasing=T)
+
+```  
+
+Un total de 2517 productoras sólo han producido una película y una de ellas ha producido 202.
+Mostramos el ranking de las 10 primeras.  
+  
+```{r Productoras1, echo=F}
+head(productoras,10)
+```
+
+Es decir la Warner ha producido 202 películas en total, Universal Pictures 188 etc.  
+
+`Nota: Como era de esperar cuantas más películas producidas mas conocida es la productora para el gran público y potencialmente más taquillera la película`   
+  
+`Notar que la 4º productora corresponde a VACIO que corresponde a aquellas películas que como se ha visto no tenían informado el campo. Para estas películas, sencillamente, la productora no será ningún valor añadido y tendrá un peso nulo`  
+
+Y por último mostramos un resumen estadístico del número de producciones por compañía. 
+```{r Productoras2, echo=F}
+summary(productoras$Freq)
+```
+
+A la vista de los resultados se observa que sólo 15 productoras superan las 40 producciones en total contituyendo lo que denominaremos, por entendernos,  el grupo de las 'superproductoras' (Aquellas que pueden tener cierto peso en el revenue esperado por su renombre) 
+
+A este valor, 40, le vamos a denominar 'umbral' y nos servirá como criterio para obtener diferentes métricas de las productoras asociadas a cada película(*) y a las  que denominaremos prod1, prod2, pro3 y prod4. 
+La idea es calcular inicialmente todas ellas para analizar posteriormente cual es la que presenta más correlación con el revenue de la película y así poder integrarla finalmente en el modelo de regresión final y descartando el resto.
+
+  
+`Nota. Cada película puede estar producida por una o varias productoras`  
+  
+(*) Para asignar un posible peso de las productoras a la película se ha creado una función específica `puntuacion_plus()` que permite extraer del json los siguientes indicadores asociados a cada película`  
+  
+1. **prod1**: Valor binario (1/0) en el supuesto de que la película haya participado  al menos una superproductora  
+2. **prod2**: Valor entero correspondiente a la suma de superproductoras que participan en cada película.   
+3. **prod3**: Valor entero que corresponde a la suma de películas totales producidos por todas las superproductoras  
+4. **prod4**: Valor entero que corresponde a la suma de todas las películas producidas por cada productora participante ( sin tener en cuenta si es superproductora o no) y con más de 1 película producida.( 1 productora con una sola película es totalmene desconocida por lo que, apriori, no supondría un valor añadido para el éxito de la película).  
+  
+  
+```{r Productoras3, echo=F}
+
+# Seleccionamos las variables que nos interesan para "production_companies"el nuevo análisis
+train.test<-subset(clean_train,select=c("title","revenue","production_companies"))
+
+# Las valores nulos los sustituimos por cadenas vacias
+train.test$production_companies[is.na(train.test$production_companies)]<-""
+
+prod1<-puntuacion_plus(train.test[,c("title","production_companies")],"productora",40,1)
+prod2<-puntuacion_plus(train.test[,c("title","production_companies")],"productora",40,2)
+prod3<-puntuacion_plus(train.test[,c("title","production_companies")],"productora",40,3)
+prod4<-puntuacion_plus(train.test[,c("title","production_companies")],"productora",1,3)
+
+#Agregamos al dataframe original estos nuevos valores
+train.test<-data.frame(train.test,prod1,prod2,prod3,prod4)
+
+```
+  
+Para evidenciar el valor asignado a cada una de las peliculas, vamos a analizar el caso de la primera película: **`r train.test$title[1]`** cuyas productoras asignadas vienen indicadas en la variable:   
+  
+***production_companies***: `r train.test$production_companies[1]` 
+
+El número de producciones asociado a cada una de ellas, según el listado que hemos obtenido anteriormente, es: 
+```{r Productoras4, echo=F}
+productoras[productoras$nombre=="Metro-Goldwyn-Mayer (MGM)" | productoras$nombre=="Paramount Pictures" | productoras$nombre=="United Artists",]
+```
+  
+`Nota. Se observa que en este caso las 3 productoras superan el valor umbral indicado, 40,  y que permite considerarlas como superproductoras`  
+
+En base a todo lo anterior tenemos que los indicadores prod1..prod4 asociados a la película **`r train.test$title[1]`** serían:  
+  
+1. $prod1 = 1$ (Al menos una de las productoras es una 'superproductora')   
+2. $prod2 = 3$ (Número de superproductoras implicadas en la película)  
+3. $prod3 = 289 (161+84+44)$ (Suma de producciones asociadas a las superproductoras) 
+4. $prod4 = 289 (161+84+44)$. Suma de producciones asociadas a todas las productoras implicadas ( sean o no sean superproductoras) con más de 1 película producida. En este caso coincide con el valor anterior porque todas las productoras participantes son top.  
+
+Realizamos el mismo cálculo para todas las películas del dataset y lo comprobamos mostrando los valores $prodN$ asociados a las primeras películas:
+
+```{r Productoras5, echo=F}
+head(train.test[,c("title","prod1","prod2","prod3","prod4")])
+
+# Agregamos a la variable clean_train la nueva variable elegida y que sera prod4. Más adelante se justificar porqué es prod4
+clean_train$productoras<-prod4
+
+```
+
+Una vez obtenidas estas nuevas variables nos interesa ver cual presenta mayor de coeficiente de correlación con la variable dependiente **revenue**.  
+  
+Más adelante se demostrará que no se puede asumir la hipótesis de normalidad de la variables 'revenue', por lo que no podremos realizar un test de correlación paramétrico y tendremos que recurrir a una prueba no-paramétrica como el **test de Kendall**.  
+  
+En la siguiente tabla se recoge el resultado de realizar dicho test de correlación entre la variable 'revenue' y cada uno de los indicadores anteriores. Se observa que el correspondiente al indicador $Prod4$ es el que mejor valor arroja y por tanto será el que elegiremos como variable independiente de cara al modelo de regresión final.
+
+  
+```{r EleccionIndicadorProductora, echo=F}
+cor.prod1<-cor.test(train.test$prod1, train.test$revenue, method="kendall")
+cor.prod2<-cor.test(train.test$prod2, train.test$revenue, method="kendall")
+cor.prod3<-cor.test(train.test$prod3, train.test$revenue, method="kendall")
+cor.prod4<-cor.test(train.test$prod4, train.test$revenue, method="kendall")
+
+
+kable_styling(kable(data.frame(Variable=c("Prod1", "Prod2", "Prod3","Prod4"), Tau=c(cor.prod1$estimate, cor.prod2$estimate, cor.prod3$estimate, cor.prod4$estimate), pvalor=c(cor.prod1$p.value, cor.prod2$p.value, cor.prod3$p.value, cor.prod4$p.value))))
+```
+
+ 
+***Cast (Reparto)***
+  
+Análogamente a lo visto anteriormente nos interesa sacar información de las variable descriptiva **cast** para poder analizar si los nombres de actores y actrices del reparto, respectivamente, son significativas para el posible 'revenue' de la película.
+
+El planteamiento será totalmente similar al explicado anteriormente para las productoras
+  
+Para ello, de nuevo,  intentaremos transformar estas variable decriptiva en una variable numérica cuyo peso ó nivel de significación se establecerá en función de la importancia de actor-actriz  en el ranking total según el número de pelíulas interpretadas. 
+  
+Para ello, de nuevo,  previamente vamos a sacar el listado de actores-actrices junto al número de películas interprestadas.  
+
+`Nota. Utilizaremos la  función ya mencionada sacar_attr() que extrae los valores de los campos json.`  
+  
+Así obtenemos un listado de `r nrow(reparto)` artistas de los cuales mostramos la tabla de distribución
+
+```{r Reparto,eval=TRUE,echo=F}
+table(reparto$Freq)
+```
+Sólo 2 actores han interpretado 30 películas y 27800, totalmente desconocidos, sólo 1. 
+
+Mostramos los 10 actores-actrices que más películas han interpretado según los datos disponibles
+```{r Reparto2, echo=F}
+head(reparto,10)
+```
+A continuación mostramos un resumen estadístico del número de películas interpretadas por cada artista.  
+  
+```{r Reparto3, echo=F}
+summary(reparto$Freq)
+
+```
+
+A la vista de los resultados se observa que sólo 20 artistas superan las 20 películas en total contituyendo el grupo de 'superestrellas'.  
+  
+
+A este valor, 20, le vamos a denominar 'umbral' y nos servirá para obtener métricas similares a las planteadas para las productoras pero asociadas en esta caso a cada artista. (*).  
+  
+`Nota. Obviamente cada película está interprestada por más de un artista`  
+`(*) Utilizaremos la misma función mencionada anteriormente, puntuacion_plus() que permite extraer del json el nombre de los actores y actrices implicadas`  
+  
+1. **rep1**: Valor binario (1/0) en el supuesto de que en el reparto haya al menos una superestrella  
+2. **rep2**: Valor entero correspondiente al total de superestrellas del reparto.   
+3. **rep3**: Valor entero que corresponde al total de todas las películas interpretadas por las superestrellas del reparto.  
+4. **rep4**: Valor entero que corresponde al total de todas las películas interpretadas por todo el reparto( sin tener en cuenta si son superestrellas o no)  
+  
+`Nota. Al igual que en el caso anterior plantearemos  diferentes indicadores y elegiremos el que mejor margen de correlación arroje con la variable dependiente revenue`
+  
+
+```{r Reparto4, echo=F}
+# Seleccionamos las variables que nos interesan el nuevo análisis
+train.test<-subset(clean_train,select=c("title","revenue","cast"))
+
+# Las valores nulos los sustituimos por cadenas vacias
+train.test$cast[is.na(train.test$cast)]<-""
+
+rep1<-puntuacion_plus(train.test[,c("title","cast")],"reparto",20,1)
+rep2<-puntuacion_plus(train.test[,c("title","cast")],"reparto",20,2)
+rep3<-puntuacion_plus(train.test[,c("title","cast")],"reparto",20,3)
+rep4<-puntuacion_plus(train.test[,c("title","cast")],"reparto",1,3)
+
+#Agregamos al dataframe original estos nuevos valores
+train.test<-data.frame(train.test,rep1,rep2,rep3,rep4)
+
+# Sacamos datos de una de las películas en la que particpa uno de los actores con más interpretaciones: "Robert De Niro"  ó "Samuel L. Jackson"
+
+# DEBUG actor30<-puntuacion_plus(train.test[,c("title","cast")],"reparto",29,1)
+# DEBUG actor30<-which(actor30==1)
+```
+
+Para evidenciar el valor asignado a cada una de las peliculas, en base al reparto vamos a analizar el caso de una de las películas en las que participa uno de los actores con más films en su haber como  **`r reparto$nombre[1]`** en la película: **`r train.test$title[2049]`**. 
+
+`Se observa que como cabeza de cartel aparece Rober de Niro interpretando al personaje masculino Michael Vronsky`
+
+Los datos se encuentran disponibles en la variable:  
+**cast**=`r train.test$cast[2049]`
+
+De la cual hemos extraído el siguiente reparto asignado junto al número de películas de cada uno de los artistas:  
+
+```{r Reparto5, echo=F}
+reparto[reparto$nombre %in% sacar_attr(train.test[2049,],"reparto")$nombre,]
+```
+
+En base a todo lo anterior tenemos que los indicadores prod1..prod4 asociados a la película **`r train$title[2049]`** serían:  
+  
+1. $rep1 = 1$      (Al menos en el reparto hay una superestrella)   
+2. $rep2 = 1$      (Suma de superestrellas en el reparto. Sólo Robert de Niro)   
+3. $rep3 = 30$     (Suma de las peliculas interpretadas en total por las superestrellas del reparto. Sólo Robert de Niro)  
+4. $rep4 = 86 (30+19+16+5+4+4+3+3+2)$ (Suma de las peliculas interpretadas en total por todos los actores-actrices del reparto - sean o no sean superestrellas - y con más de 1 película en su haber)   
+  
+'Nota. Al igual que en el caso de las productoras, nos contamos los que tienen sólo 1 película en su haber al considerar que son totalmente desconocidos para el gran público y por tanto, a priori,  con poco 'reclamo' comercial'`
+
+Realizamos el mismo cálculo para todas las películas del dataset y mostramos, a modo de ejemplo unas películas y entre ellos la mencionada anteriormente,  para evidenciar esta asignación de nuevas variables.
+
+```{r Reparto6, echo=F}
+train.test[c(2049,30,1:2),c("title","rep1","rep2","rep3","rep4")]
+
+# Agregamos a la variable clean_train la nueva variable elegida y que sera rep4 según se justifica mas adelante
+
+clean_train$reparto<-rep4
+```
+Al igual que hemos hecho en los casos anteriores procederemos a analizar el coeficiente de correlación de cada uno de estos indicadores con la variable 'revenue' obteniendo la siguiente tabla.  
+
+```{r EleccionIndicadorReparto, echo=F}
+cor.rep1<-cor.test(train.test$rep1, train.test$revenue, method="kendall")
+cor.rep2<-cor.test(train.test$rep2, train.test$revenue, method="kendall")
+cor.rep3<-cor.test(train.test$rep3, train.test$revenue, method="kendall")
+cor.rep4<-cor.test(train.test$rep4, train.test$revenue, method="kendall")
+
+
+kable_styling(kable(data.frame(Variable=c("rep1", "rep2", "rep3","rep4"), Tau=c(cor.rep1$estimate, cor.rep2$estimate, cor.rep3$estimate, cor.rep4$estimate), pvalor=c(cor.rep1$p.value, cor.rep2$p.value, cor.rep3$p.value, cor.rep4$p.value))))
+```
+
+Elegimos para el modelo de regresión final aquel que presenta mejor valor de $Tau$ y que es `rep4`.  
+    
+***Crew (Equipo Producción)***  
+  
+Al igual que hemos hecho para las otras variables, en este caso vamos a intentar obtener un valor cuantitativo asociado  a la variable **crew** que pretende recoger el impacto económico en dividendos que el equipo de producción de una película podría tener de cara a los beneficios de la misma.  
+  
+Para ello, y al igual que hemos hecho en el caso anterior,  previamente vamos a sacar el listado de todos los miembros del equipo de producción junto al número de películas en las que han participado utilizando la misma función `sacar_attr()` que extrae los valores de los campos json.  
+  
+Así obtenemos un listado de `r nrow(equipo)` técnicos de los cuales obtenemos la siguiente tabla de distribución de películas realizadas.
+
+```{r Equipo,eval=TRUE,echo=F}
+table(equipo$Freq)
+```
+Mostramos los 10 técnicos que más han participado en la realización de las películas del dataset sea en el role que sea.
+``` {r Equipo2, echo=F}
+head(equipo,10)
+
+```
+Por último, mostramos un resumen estadístico del número de producciones por técnico.  
+  
+```{r Equipo3, echo=F}
+summary(equipo$Freq)
+
+```
+
+A la vista de los resultados se observa que sólo 15 personas han trabajado en 30 ó más películas en total contituyendo lo que denominaremos los técnicos 'Top'.  
+
+
+Se observa que en dicho listado aparecen nombres relevantes como el asociado al director "Steven Spielberg".  
+
+Este valor, 30, le vamos a denominar 'umbral' y nos servirá para obtener métricas similares a las anteriores asociadas a cada técnico 'top'. (*).  
+  
+`(*) Utilizaremos la misma función mencionada anteriormente, puntuacion_plus() que permite extraer del json el nombre de los actores y actrices implicadas`  
+  
+1. **equip1**: Valor binario (1/0) en el supuesto de que en el reparto haya un técnico del 'Top'  
+2. **equip2**: Valor entero correspondiente al total de técnicos 'Top'.   
+3. **equip3**: Valor entero que corresponde al total de todas las películas en las que ha participado los técnicos 'Top'.  
+4. **equip4**: Valor entero que corresponde al total de todas las películas realizadas por cualquier técnico del equipo de producción( sin tener en cuenta si es miembro del denominado equipo 'Top' ó no)  
+  
+`Nota. Al igual que en el caso anterior plantearemos  diferentes indicadores y elegiremos el que mejor margen de correlación arroje`
+  
+
+```{r Equipo4, echo=F}
+# Seleccionamos las variables que nos interesan el nuevo análisis
+train.test<-subset(clean_train,select=c("title","revenue","crew"))
+
+# Las valores nulos los sustituimos por cadenas vacias
+train.test$crew[is.na(train.test$crew)]<-""
+
+equip1<-puntuacion_plus(train.test[,c("title","crew")],"equipo",30,1)
+equip2<-puntuacion_plus(train.test[,c("title","crew")],"equipo",30,2)
+equip3<-puntuacion_plus(train.test[,c("title","crew")],"equipo",30,3)
+equip4<-puntuacion_plus(train.test[,c("title","crew")],"equipo",1,3)
+
+#Agregamos al dataframe original estos nuevos valores
+train.test<-data.frame(train.test,equip1,equip2,equip3,equip4)
+
+
+#DEBUG equipo50<-puntuacion_plus(train.test[,c("title","crew")],"equipo",49,1)
+#DEBUG equipo50<-which(equipo50==1)
+```
+
+Para evidenciar el valor asignado a cada una de las peliculas, en base al reparto vamos a analizar el caso de una de las películas en las que participa uno de los técnicos con más films en su haber como  **`r equipo$nombre[1]`** en la película: **`r train.test$title[163]`**.  
+
+Los valores se extraen de la variable: 
+**crew**=`r train.test$crew[163]`
+  
+Extrayendo los datos de la variable anterior obtenemos que el equipo de producción es el siguiente junto al número de películas de cada uno:  
+
+```{r Equipo5, echo=F}
+equipo[equipo$nombre %in% sacar_attr(train.test[163,],"equipo")$nombre,]
+```
+  
+En base a todo lo anterior tenemos que los indicadores equip1..equip4 asociados a la película **`r train.test$title[163]`** serían:  
+  
+1. $equip1 =1$  (Al menos en el equipo de producción hay un técnico Top - Avy Kaufman)
+2. $equip2 =1$. (Suma de técnicos top en el equipo de producción - Sólo Avy Kaufman)
+3. $equip3 =50$. (Suma de peliculas realizadas en total por todas las personas del equipo top - Sólo Avy Kaufman) 4. $equip4= 73 (50+6+4+4+3+2+2+2)$. Suma de peliculas realizadas en total por todos los técnicos del equipo -  sean ó no 'sean superequipo'Top', pero con más de 1 película en su haber
+  
+Realizamos el mismo cálculo para todas las películas del dataset y mostramos, a modo de ejemplo, algunos films, entre ellos el mencionado anteriormente,  para evidenciar esta asignación de nuevas variables.
+
+```{r Equipo6, echo=F}
+train.test[c(163,1:2),c("title","equip1","equip2","equip3","equip4")]
+
+# Agregamos a la variable clean_train la nueva variable elegida y que sera equip4
+clean_train$produccion<-equip4
+
+```
+  
+Al igual que hemos hecho en los casos anteriores procederemos a analizar el coeficiente de correlación de cada uno de estos indicadores con la variable 'revenue' obteniendo la siguiente tabla.
+```{r EleccionIndicadorProduccion, echo=F}
+cor.equi1<-cor.test(train.test$equip1, train.test$revenue, method="kendall")
+cor.equi2<-cor.test(train.test$equip2, train.test$revenue, method="kendall")
+cor.equi3<-cor.test(train.test$equip3, train.test$revenue, method="kendall")
+cor.equi4<-cor.test(train.test$equip4, train.test$revenue, method="kendall")
+
+
+kable_styling(kable(data.frame(Variable=c("Equip1", "Equip2", "Equip3","Equip4"), Tau=c(cor.equi1$estimate, cor.equi2$estimate, cor.equi3$estimate, cor.equi4$estimate), pvalor=c(cor.equi1$p.value, cor.equi2$p.value, cor.equi3$p.value, cor.equi4$p.value))))
+```
+
+Elegimos para el modelo de regresión final aquel que presenta mejor valor de $Tau$ y que corresponde a 'equip4'.
+
+<br/>
+
+# 4. Análisis de los datos
+
+## 4.1. Planificación de los análisis a aplicar 
+
+Procederemos a analizar por un lado las variables cuantitativas, y por otro, las cualitativas.
+
+- **Variables cuantitativas**: *budget, revenue, runtime, popularity, productoras, reparto, produccion* 
+
+  >- Comprobación de normalidad (sólo variables continuas: *budget, revenue, popularity*)
+  
+  >- Análisis visual: histogramas, diagramas de caja, diagramas de dispersión con respecto a **revenue**  
+  
+  >- Análisis de correlación con **revenue**
+  
+  >- Modelo de regresión lineal múltiple (junto con variables cualitativas)
+
+- **Variables cualitativas**:  *collection, english_speaking, genres(20) mes, year*
+
+  >- Comprobación de homogeneidad de varianzas 
+
+  >- Análisis visual: diagramas de caja
+  
+  >- Contraste de hipótesis para la media: Student T-test, ANOVA 
+  
+  >- Modelo de regresión lineal múltiple (junto con variables cuantitativas)
+
+
+## 4.2. Comprobación de la normalidad y homogeneidad de la varianza. 
+
+Interesa comprobar la normalidad de la distribución de las distintas variables y la homogeneidad de sus varianzas para decidir qué tipo de tests utilizamos cuando hagamos contrastes de hipótesis sobre la media. Además, en este proyecto llevaremos a cabo modelos de regresión lineal, con lo cual será importante para tener un buen ajuste de los modelos que los residuos que obtengamos tengan una distribución normal y homogeneidad de varianza (homoscedasticidad). 
+
+Para el caso de los contrastes de hipótesis sabemos por el Teorema del Límite Central que para muestras de >30 casos la distribución de las medias muestrales es normal, con lo cual no tendremos la necesidad de comprobar las distribuciones de normalidad de las distintas variables poblacionales en este caso.
+
+Para el caso de los modelos de regresión lineal, si bien es cierto que se asume que con muestras grandes (>200) no sería necesario hacer transformación de los datos (<https://www.statisticssolutions.com/normality/>) decidimos llevarla a cabo sólo para las variables cuantitativas continuas **budget**, **popularity** y **revenue**, ésta última por ser la variable dependiente y las otras dos por ser las que presentan mayor correlación con aquella. De tal forma que sólo en el caso de encontrarnos con un patrón no aleatorio de los residuos o de encontrarnos con un problema de heteroscedasticidad usaremos dichas variables normalizadas en nuestro modelo.
+
+En relación a la homogeneidad de varianzas, interesará analizarla tanto en el caso de los contrastes de hipótesis de las variables cualitativas (para decidir qué test utilizar como veremos más adelante) como en el caso de los residuos generados por los modelos de regresión lineal.
+
+### 4.2.1. Comprobación de normalidad
+
+Como ya hemos comentado, sólo comprobaremos la distribución de las variables **budget**, **popularity** y **revenue**.
+
+Visualizamos la distribución y usamos el test de *Shapiro-Wilk*, para cada una de las variables según las siguientes hipótesis $H_0$ y $H_1$. 
+
+1. Hipótesis nula :  $H_0$: La distribución de la variable es normal.
+2. Hipótesis alternativa: $H_1$: La distribución de la variable no es normal
+
+> Variable ***budget***
+
+```{r Analisis Normalidad, echo=F, fig.height=4, fig.width=4, fig.align='center'}
+# Budget
+
+plotn(clean_train$budget, xlab="Budget")
+shap.budget<-shapiro.test(clean_train$budget)
+shap.budget
+
+
+```
+
+> Variable ***revenue***
+
+```{r Analisis Normalidad2, echo=F, fig.height=4, fig.width=4, fig.align='center'}
+
+# Revenue
+
+plotn(clean_train$revenue, xlab="Revenue")
+shap.revenue<-shapiro.test(clean_train$revenue)
+shap.revenue
+```
+
+> Variable ***popularity***
+
+```{r Analisis Normalidad3, echo=F, fig.height=4, fig.width=4, fig.align='center'}
+
+# Popularity
+
+plotn(clean_train$popularity, xlab="Popularity")
+shap.popularity<-shapiro.test(clean_train$popularity)
+shap.popularity
+```
+
+<br/>
+
+Comprobamos que ninguna de las variables presenta una distribución normal por lo que procederemos a crear las variables equivalentes transformadas correspondientes: **budget_boxcox**, **revenue_boxcox** y **popularity:boxcox** usando `BoxCox()` y `BoxCoxLambda()` del paquete DescTools.
+
+> Variable ***budget***
+
+```{r BoxCox_Budget, echo=FALSE}
+
+
+# Variable "budget"
+
+# Nos deshacemos de los valores "NA" para poder ejecutar las funciones BoxCoxLambda() y BoxCox() 
+
+x<-clean_train$budget[!is.na(clean_train$budget)]
+
+# Identificamos el valor lambda 
+
+lambda_budget<-DescTools::BoxCoxLambda(x, method="loglik")
+
+# Transformamos "budget" usando la formula con el valor de lambda y creamos una nueva variable llamada "budget_boxcox"
+
+clean_train<-mutate(clean_train, budget_boxcox = formula(clean_train$budget, lambda_budget))
+
+kable_styling(kable(head(data.frame(id= clean_train['X.U.FEFF.id'], title= clean_train['title'], budget=clean_train['budget'], budget.transf=clean_train['budget_boxcox']))))
+
+```
+
+<br/>
+
+> Variable ***revenue***
+
+```{r BoxCox_Revenue, echo=F}
+
+# Nos deshacemos de los valores "NA" para poder ejecutar las funciones BoxCoxLambda() y BoxCox() 
+
+x<-clean_train$revenue[!is.na(clean_train$revenue)]
+
+# Identificamos el valor lambda 
+
+lambda_revenue<-DescTools::BoxCoxLambda(x, method="loglik")
+
+# Transformamos "revenue" usando la formula con el valor de lambda y creamos una nueva variable llamada "revenue_boxcox"
+
+clean_train<-mutate(clean_train, revenue_boxcox = formula(clean_train$revenue, lambda_revenue))
+
+kable_styling(kable(head(data.frame(id= clean_train['X.U.FEFF.id'], title= clean_train['title'], budget=clean_train['revenue'], budget.transf=clean_train['revenue_boxcox']))))
+
+
+```
+
+<br/>
+
+> Variable ***popularity***
+
+```{r BoxCox_Popularity, echo=F}
+
+# Identificamos el valor lambda 
+
+lambda_popularity<-DescTools::BoxCoxLambda(clean_train$popularity, method="loglik")
+
+# Transformamos "popularity" usando la formula con el valor de lambda y creamos una nueva variable llamada "popularity_boxcox"
+
+clean_train<-mutate(clean_train, popularity_boxcox = formula(clean_train$popularity, lambda_popularity))
+
+kable_styling(kable(head(data.frame(id= clean_train['X.U.FEFF.id'], title= clean_train['title'], budget=clean_train['popularity'], budget.transf=clean_train['popularity_boxcox']))))
+
+```
+
+Volvemos a comprobar las distribuciones y el p-valor dado por el test de *Shapiro-Wilk*.
+
+> Variable ***budget***
+
+```{r Plot_BoxPlot_Budget, echo=F, fig.height=4, fig.width=4, fig.align='center'}
+
+# Budget
+
+plotn(clean_train$budget_boxcox)
+shap.budget_boxcox<-shapiro.test(clean_train$budget_boxcox)
+shap.budget_boxcox
+
+```
+
+> Variable ***revenue***
+
+```{r Plot_BoxPlot_Revenue, echo=F, fig.height=4, fig.width=4, fig.align='center'}
+# Revenue
+
+plotn(clean_train$revenue_boxcox)
+shap.revenue_boxcox<-shapiro.test(clean_train$revenue_boxcox)
+shap.revenue_boxcox
+```
+
+> Variable ***popularity***
+
+```{r Plot_BoxPlot_Popularity, echo=F, fig.height=4, fig.width=4, fig.align='center'}
+# Popularity
+
+plotn(clean_train$popularity_boxcox)
+shap.popularity_boxcox<-shapiro.test(clean_train$popularity_boxcox)
+shap.popularity_boxcox
+```
+
+<br/>
+
+Comparamos los p-valores de las variables antes y después de la transformación.
+
+```{r Kable, echo=F}
+
+kable_styling(kable(data.frame(var=c("budget", "revenue", "popularity"), p.value.BEFORE_transf= c(toString(shap.budget$p.value),shap.revenue$p.value, shap.popularity$p.value), p.value.AFTER_transf=c(toString(shap.budget_boxcox$p.value),shap.revenue_boxcox$p.value,shap.popularity_boxcox$p.value)  )))
+
+```
+
+Los p-valores no llegan a ser menores que 0.05 pero han aumentado de forma considerable su valor si comparamos con los valores obtenidos antes de la transformación delas variables. Si bien no hemos conseguido la normalidad, nos hemos aproximado a ella a juzgar por los histogramas y el cambio en los p-valores.
+
+### 4.2.2. Homogeneidad de varianzas
+
+Nos convendrá saber si existe homoscedasticidad tanto en el caso que hemos comentado anteriormente, cuando estudiemos los residuos de los modelos de regresión lineal, como en el caso de hacer contrastes de hipótesis sobre las media de las distintas variables categóricas, análisis que también haremos más adelante utilizando ANOVA o T de Student, según el caso.
+
+Por lo tanto, estudiaremos si existe homoscedasticidad utilizando el **Test de Levene**, apropiado para variables no normales y que plantea las siguientes hipótesis nula y alternativa:
+
+1. Hipótesis nula: 
+
+$H_o$: Las varianzas de los distintos grupos son iguales: $var_1 = var_2 = ... var_n$ siendo 'n' el número de niveles de la variable.
+
+2. Hipótesis alternativa:
+
+$H_1:$: No todas las varianzas son iguales: $var_i \neq var_j$ para algún $i,j$
+
+> variable ***collection***
+
+```{r Levene_collection, echo=F}
+
+l.collection<-leveneTest(revenue~collection, data=clean_train)
+l.collection
+pvalue.collection<-l.collection$`Pr(>F)`[1]
+
+```
+
+Observamos que el p-valor (**`r pvalue.collection`**) es menor que un nivel de significación del 0.05 e incluso del 0.01, con lo cual rechazaríamos la hipótesis nula de que las varianzas serían todas iguales.
+
+> variable ***english_speaking***
+
+```{r Levene_english, echo=F}
+l.language<-leveneTest(revenue~english_speaking, data=clean_train)
+l.language
+pvalue.language<-l.language$`Pr(>F)`[1]
+```
+
+Observamos que el p-valor (**`r pvalue.language`**) es menor que un nivel de significación del 0.05 e incluso del 0.01, con lo cual rechazaríamos la hipótesis nula de que las varianzas serían todas iguales.
+
+> variable ***mes***
+
+```{r Levene_mes, echo=F}
+l.mes<-leveneTest(revenue~mes, data=clean_train)
+l.mes
+pvalue.mes<-l.mes$`Pr(>F)`[1]
+
+```
+
+Observamos que el p-valor (**`r pvalue.mes`**) es menor que un nivel de significación del 0.05 e incluso del 0.01, con lo cual rechazaríamos la hipótesis nula de que las varianzas serían todas iguales.
+
+> Variables: "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western"
+
+```{r Levene_genres, echo=F}
+
+l.action<-leveneTest(revenue~Action, data=clean_train)
+pvalue.action<-l.action$`Pr(>F)`[1]
+
+l.adventure<-leveneTest(revenue~Adventure, data=clean_train)
+pvalue.adventure<-l.adventure$`Pr(>F)`[1]
+
+l.animation<-leveneTest(revenue~Animation, data=clean_train)
+pvalue.animation<-l.animation$`Pr(>F)`[1]
+
+l.comedy<-leveneTest(revenue~Comedy, data=clean_train)
+pvalue.comedy<-l.comedy$`Pr(>F)`[1]
+
+l.crime<-leveneTest(revenue~Crime, data=clean_train)
+pvalue.crime<-l.crime$`Pr(>F)`[1]
+
+l.doc<-leveneTest(revenue~Documentary, data=clean_train)
+pvalue.doc<-l.doc$`Pr(>F)`[1]
+
+l.drama<-leveneTest(revenue~Drama, data=clean_train)
+pvalue.drama<-l.drama$`Pr(>F)`[1]
+
+l.family<-leveneTest(revenue~Family, data=clean_train)
+pvalue.family<-l.family$`Pr(>F)`[1]
+
+l.fantasy<-leveneTest(revenue~Fantasy, data=clean_train)
+pvalue.fantasy<-l.fantasy$`Pr(>F)`[1]
+
+l.foreign<-leveneTest(revenue~Foreign, data=clean_train)
+pvalue.foreign<-l.foreign$`Pr(>F)`[1]
+
+l.history<-leveneTest(revenue~History, data=clean_train)
+pvalue.history<-l.history$`Pr(>F)`[1]
+
+l.horror<-leveneTest(revenue~Horror, data=clean_train)
+pvalue.horror<-l.horror$`Pr(>F)`[1]
+
+l.music<-leveneTest(revenue~Music, data=clean_train)
+pvalue.music<-l.music$`Pr(>F)`[1]
+
+l.mystery<-leveneTest(revenue~Mystery, data=clean_train)
+pvalue.mystery<-l.mystery$`Pr(>F)`[1]
+
+l.romance<-leveneTest(revenue~Romance, data=clean_train)
+pvalue.romance<-l.romance$`Pr(>F)`[1]
+
+l.scifi<-leveneTest(revenue~Science_Fiction, data=clean_train)
+pvalue.scifi<-l.scifi$`Pr(>F)`[1]
+
+l.thriller<-leveneTest(revenue~Thriller, data=clean_train)
+pvalue.thriller<-l.thriller$`Pr(>F)`[1]
+
+l.war<-leveneTest(revenue~War, data=clean_train)
+pvalue.war<-l.war$`Pr(>F)`[1]
+
+l.western<-leveneTest(revenue~Western, data=clean_train)
+pvalue.western<-l.western$`Pr(>F)`[1]
+
+# Preparar la columna con el  número de peliculas por género
+
+genre.table2<-(table(md$value))
+genre.df2<-data.frame(genre.table2)
+genre.df2<-genre.df2[-1,]
+rownames(genre.df2)<-seq(length=nrow(genre.df2))
+colnames(genre.df2)[1]<-"Genres"
+
+footnote(kable_styling(kable(data.frame(vars=c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western"), pvalue=c(toString(pvalue.action), pvalue.adventure,pvalue.animation,pvalue.comedy,pvalue.crime,pvalue.doc,pvalue.drama,pvalue.family,pvalue.fantasy,pvalue.foreign,pvalue.history,pvalue.horror,pvalue.music,pvalue.mystery,pvalue.romance,pvalue.scifi,pvalue.thriller,'NA',pvalue.war,pvalue.western),signif=c('**','**','**','*','*','**','**','**','**','*','**','*','','','**','**','','NA','',''),genre.df2[2]))), general="** pvalor<0.01, * pvalor<0.05")
+
+
+```
+
+Vemos que el p-valor es mayor que el nivel de significación del 0.5 sólo en 5 variables (**Music**, **Mystery**, **Thriller**, **War** y **Western**), con lo cual sólo existe homogeneidad de varianzas en dichos casos.
+
+`Nota: en el caso de 'Tv_movie' al haber sólo 1 caso con este tipo de género no se ha podido hacer el contraste`.
+
+### 4.2.3. Tratamiento de valores extremos II (*outliers*)
+
+Se consideran valores extremos todos aquellos por encima (y por debajo) de 3 desviaciones estándar de la media (mean $\pm$ 3*SD).Pueden ser causados por errores (en la entrada de datos, en las mediciones), por falsas asunciones debidas a distribuciones no normales, o puede que sean incluso valores correctos.
+
+Identificamos si existen valores extremos en las variables **budget_boxcox** **popularity_boxcox** y **revenue_boxcox**.
+
+> Variable ***budget_boxcox***
+
+```{r Outliers_Budget, echo=FALSE}
+
+summary(clean_train$budget_boxcox)
+
+st.dev<-sd(clean_train$budget_boxcox, na.rm=TRUE)
+media<-mean(clean_train$budget_boxcox, na.rm=TRUE)
+
+up.budget<-media+st.dev*3
+down.budget<-media-st.dev*3
+
+sprintf("El número de valores extremos por encima es de %s", nrow(clean_train[which(clean_train$budget_boxcox>up.budget),]))
+
+subset1<-clean_train[which(clean_train$budget_boxcox>up.budget),]
+rownames(subset1)<-c()
+
+subset2<-clean_train[which(clean_train$budget_boxcox<down.budget),]
+rownames(subset2)<-c()
+
+if (nrow(subset1) != 0) {
+  kable(subset1[c('X.U.FEFF.id','title','budget', 'budget_boxcox')])
+}
+
+sprintf("El número de valores extremos por debajo es de %s", nrow(clean_train[which(clean_train$budget_boxcox<down.budget),]))
+
+if (nrow(subset2) != 0) {
+  kable(subset2[c('X.U.FEFF.id','title','budget', 'budget_boxcox')])
+}
+
+```
+
+<br/>
+
+> Variable ***revenue_boxcox***
+
+```{r Outliers_Revenue, echo=FALSE}
+
+summary(clean_train$revenue_boxcox)
+
+st.dev<-sd(clean_train$revenue_boxcox, na.rm=TRUE)
+media<-mean(clean_train$revenue_boxcox, na.rm=TRUE)
+
+up.revenue<-media+st.dev*3
+down.revenue<-media-st.dev*3
+
+sprintf("El número de valores extremos por encima es de %s", nrow(clean_train[which(clean_train$revenue_boxcox>up.revenue),]))
+
+if (nrow(clean_train[which(clean_train$revenue_boxcox>up.revenue),]) != 0) {
+  kable(clean_train[which(clean_train$revenue_boxcox>up.revenue),][c('X.U.FEFF.id','title','revenue', 'revenue_boxcox')])
+}
+
+sprintf("El número de valores extremos por debajo es de %s", nrow(clean_train[which(clean_train$revenue_boxcox<down.revenue),]))
+
+
+if (nrow(clean_train[which(clean_train$revenue_boxcox<down.revenue),]) != 0) {
+  kable(clean_train[which(clean_train$revenue_boxcox<down.revenue),][c('X.U.FEFF.id','title','revenue', 'revenue_boxcox')])
+}
+
+```
+
+> Variable ***popularity***
+
+```{r Outliers_Popularity, echo=FALSE}
+
+summary(clean_train$popularity_boxcox)
+
+st.dev<-sd(clean_train$popularity_boxcox, na.rm=TRUE)
+media<-mean(clean_train$popularity_boxcox, na.rm=TRUE)
+
+up.popularity<-media+st.dev*3
+down.popularity<-media-st.dev*3
+
+subset3<-clean_train[which(clean_train$popularity_boxcox>up.popularity),]
+rownames(subset3)<-c()
+
+subset4<-clean_train[which(clean_train$popularity_boxcox<down.popularity),]
+rownames(subset4)<-c()
+
+sprintf("El número de valores extremos por encima es de %s", nrow(subset3))
+
+if (nrow(subset3) != 0) {
+  kable(subset3[c('X.U.FEFF.id','title','popularity', 'popularity_boxcox')])
+}
+
+sprintf("El número de valores extremos por debajo es de %s", nrow(subset4))
+
+if (nrow(subset4) != 0) {
+  kable(subset4[c('X.U.FEFF.id','title','popularity', 'popularity_boxcox')])
+}
+
+```
+
+Hemos detectado 4 valores extremos en el caso de **budget** (2 por encima y 2 por debajo) y 27 en el caso de **popularity** (17 encima y 10 por debajo). Lo que haremos será probar a excluir los casos que los contienen cuando lleguemos a la parte de generar los modelos de regresión y comparar la calidad del modelo.
+
+## 4.4. Análisis visual y estadístico de los datos.
+
+En función de los datos y el objetivo del estudio, aplicar pruebas de contraste de hipótesis, correlaciones, regresiones, etc. Aplicar al menos tres métodos de análisis diferentes. 
+
+### 4.4.1. Análisis de variables cuantitativas
+
+* **Análisis visual**: histogramas, diagramas de caja, diagramas de dispersión con respecto a **revenue**
+
+> Variables ***budget*** y ***budget_boxcox***
+
+```{r Analisis_Budget}
+
+summary(clean_train$budget)
+summary(clean_train$budget_boxcox)
+
+```
+
+
+```{r Analisis_Budget2, echo=FALSE, fig.height=5, fig.width=8}
+
+ggplots(clean_train, clean_train$budget, clean_train$budget_boxcox, "Budget", "budget_boxcox")
+
+```
+
+
+> Variables ***revenue*** y ***revenue_boxcox***
+
+
+```{r Analisis_Revenue}
+
+summary(clean_train$revenue)
+summary(clean_train$revenue_boxcox)
+
+```
+
+```{r Analisis_Revenue2, echo=FALSE, fig.height=5, fig.width=8}
+
+ggplots(clean_train, clean_train$revenue, clean_train$revenue_boxcox, "Revenue", "revenue_boxcox")
+
+```
+
+<br/>
+
+> Variable ***runtime***
+
+```{r Analisis_RunTime, echo=FALSE, fig.height=3, fig.width=7}
+
+summary(clean_train$runtime)
+
+ggplots2(clean_train, clean_train$runtime, "Runtime")
+
+```
+
+> Variable ***popularity***
+
+```{r Analisis_Popularity, echo=FALSE, fig.height=3, fig.width=7}
+
+summary(clean_train$popularity)
+
+ggplots(clean_train, clean_train$popularity, clean_train$popularity_boxcox, "Popularity", "Popularity_boxcox")
+
+```
+
+<br/>  
+  
+> Variable ***productoras***
+
+```{r Analisis_Productoras, echo=FALSE, fig.height=3, fig.width=7}
+
+summary(clean_train$productoras)
+
+ggplots2(clean_train, clean_train$productoras, "Productoras")
+
+```
+
+<br/>  
+  
+> Variable ***reparto***
+
+```{r Analisis_Reparto, echo=FALSE, fig.height=3, fig.width=7}
+
+summary(clean_train$reparto)
+
+ggplots2(clean_train, clean_train$reparto, "Reparto")
+
+```
+
+<br/>  
+  
+> Variable ***produccion***
+
+```{r Analisis_Produccion, echo=FALSE, fig.height=3, fig.width=7}
+
+summary(clean_train$produccion)
+
+ggplots2(clean_train, clean_train$produccion, "Produccion")
+
+```
+
+<br/>
+
+Analizamos el grado de correlación de las variables cuantitativas con la variable **revenue**. Para ello realizamos diagramas de dispersión (*scatterplot*) y test de correlación.
+
+
+> Variable ***budget***
+
+```{r Scatter_Budget, echo=FALSE, fig.height=3, fig.width=6}
+
+sc1<-scatter(clean_train, clean_train$budget, clean_train$revenue, "Budget", "Revenue")
+
+sc2<-scatter(clean_train, clean_train$budget_boxcox, clean_train$revenue_boxcox, "Budget_norm", "Revenue_norm")
+
+grid.arrange(sc1, sc2, nrow=1, ncol=2)
+
+```
+
+<br/>
+
+> Variable ***popularity***
+
+```{r Scatter_popularity, echo=FALSE, fig.height=3, fig.width=6}
+
+sc3<-scatter(clean_train, clean_train$popularity, clean_train$revenue, "Popularity", "Revenue")
+
+sc4<-scatter(clean_train, clean_train$popularity_boxcox, clean_train$revenue_boxcox, "Popularity_norm", "Revenue_norm")
+
+grid.arrange(sc1, sc2, nrow=1, ncol=2)
+
+```
+
+> Variable ***runtime***
+
+```{r Scatter_RunTime, echo=FALSE, fig.height=3, fig.width=6}
+
+sc5<-scatter(clean_train, clean_train$runtime, clean_train$revenue, "Runtime", "Revenue")
+
+sc5
+
+```
+
+<br/>  
+  
+> Variables ***productoras***, ***reparto*** y ***produccion***
+
+```{r Scatter_Productoras, echo=FALSE, fig.height=5, fig.width=7}
+
+sc6<-scatter(clean_train, clean_train$productoras, clean_train$revenue, "Productoras", "Revenue")
+
+sc7<-scatter(clean_train, clean_train$reparto, clean_train$revenue, "Reparto", "Revenue")
+
+sc8<-scatter(clean_train, clean_train$produccion, clean_train$revenue, "Produccion", "Revenue")
+
+grid.arrange(sc6, sc7, sc8, nrow=2, ncol=2)
+
+```
+
+<br/>
+
+* **Análisis de correlación con *revenue***
+
+Realizamos el test de correlación de cada una de las variables cuantitativas con **revenue**. Como hemos visto que  ninguna de las variables presentaban una distribución normal aun después de la normalización, decidimos utilizar un test no paramétrico como es **Kendall's test**.
+
+```{r Kendall, echo= FALSE}
+
+# Variable "budget"
+
+cor.budget<-cor.test(clean_train$budget, clean_train$revenue, method="kendall")
+
+# Variable "runtime"
+
+cor.runtime<-cor.test(clean_train$runtime, clean_train$revenue, method="kendall")
+
+# Variable "popularity"
+
+cor.popularity<-cor.test(clean_train$popularity, clean_train$revenue, method="kendall")
+
+# Variable "productoras"
+
+cor.productoras<-cor.test(clean_train$productoras, clean_train$revenue, method="kendall")
+
+# Variable "reparto"
+
+cor.reparto<-cor.test(clean_train$reparto, clean_train$revenue, method="kendall")
+
+# Variable "produccion"
+
+cor.produccion<-cor.test(clean_train$produccion, clean_train$revenue, method="kendall")
+
+# Variable "popularity"
+
+cor.popularity<-cor.test(clean_train$popularity, clean_train$revenue, method="kendall")
+
+kable_styling(kable(data.frame(Variable=c("budget", "runtime", "popularity","productoras","reparto","produccion"), Tau=c(cor.budget$estimate, cor.runtime$estimate, cor.popularity$estimate, cor.productoras$estimate, cor.reparto$estimate, cor.produccion$estimate), pvalor=c(toString(cor.budget$p.value), cor.runtime$p.value, cor.popularity$p.value, cor.productoras$p.value, cor.reparto$p.value, cor.produccion$p.value))))
+
+```
+
+<br/>
+
+Realizamos la matriz de correlación para las variables cuantitativas en su conjunto.
+
+```{r Matriz_Correlacion,echo=FALSE, fig.height=5, fig.width=5}
+
+clean_train %>%
+  dplyr::select(budget,popularity, runtime, revenue, productoras, reparto, produccion) %>%
+  cor(method="kendall",use="complete.obs") %>%
+  corrplot(method="number")
+
+```
+
+<br/>
+
+Podemos observar que todas las variables presentan correlación con **revenue** siendo más significativo el caso de **budget** (Tau= 0.46) seguido de **produccion** (Tau= 0.41) y **popularity** (Tau= 0.41).
+
+### 4.4.2. Análisis de variables categóricas
+
+* **Análisis visual**: diagramas de caja
+
+Para el análisis de las variables categóricas utilizaremos diagramas de caja comparando el valor de **revenue** atendiendo a los distintos niveles de cada variable.
+
+
+> Variables ***collection*** y ***english_speaking***
+
+```{r Boxplot_Collection, echo=FALSE, fig.height=3, fig.width=9}
+
+b1<-boxplots(clean_train, clean_train$collection, "Collection")
+
+b2<-boxplots(clean_train, clean_train$english_speaking, "English_speaking")
+
+grid.arrange(b1, b2, nrow=1, ncol=2)
+
+```
+
+Podemos apreciar que existen diferencias de **revenue** en cuanto a **collection** mientras que no se aprecian muchas diferencias en cuanto a **english_speaking**. Se explorarán mejor estas diferencias en el modelo de regresión lineal. 
+
+> Variable ***genres***
+
+```{r Boxplots_Generos, echo=FALSE, fig.height=2, fig.width=7}
+
+g11<-ggplot(subset(clean_train, Action %in% 1), aes(Action, revenue))+
+    geom_boxplot()+
+  scale_fill_discrete(name="")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))
+
+g12<-ggplot(subset(clean_train, Adventure %in% 1), aes(Adventure, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g13<-ggplot(subset(clean_train, Animation %in% 1), aes(Animation, revenue))+
+    geom_boxplot()+
+  scale_fill_discrete(name="")+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g14<-ggplot(subset(clean_train, Comedy %in% 1), aes(Comedy, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g15<-ggplot(subset(clean_train, Crime %in% 1), aes(Crime, revenue))+
+    geom_boxplot()+
+   ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g16<-ggplot(subset(clean_train, Documentary %in% 1), aes(Documentary, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g17<-ggplot(subset(clean_train, Drama %in% 1), aes(Drama, revenue))+
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g18<-ggplot(subset(clean_train, Family %in% 1), aes(Family, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g19<-ggplot(subset(clean_train, Fantasy %in% 1), aes(Fantasy, revenue))+
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g20<-ggplot(subset(clean_train, Foreign %in% 1), aes(Foreign, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g21<-ggplot(subset(clean_train, History %in% 1), aes(History, revenue))+
+    geom_boxplot()+
+  scale_fill_discrete(name="")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))
+
+g22<-ggplot(subset(clean_train, Horror %in% 1), aes(Horror, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g23<-ggplot(subset(clean_train, Music %in% 1), aes(Music, revenue))+
+    geom_boxplot()+
+  scale_fill_discrete(name="")+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g24<-ggplot(subset(clean_train, Mystery %in% 1), aes(Mystery, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g25<-ggplot(subset(clean_train, Romance %in% 1), aes(Romance, revenue))+
+    geom_boxplot()+
+   ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g26<-ggplot(subset(clean_train, `Science_Fiction` %in% 1), aes(`Science_Fiction`, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g27<-ggplot(subset(clean_train, Thriller %in% 1), aes(Thriller, revenue))+
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g28<-ggplot(subset(clean_train, `Tv_movie` %in% 1), aes(`Tv_movie`, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g29<-ggplot(subset(clean_train, War %in% 1), aes(War, revenue))+
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+g30<-ggplot(subset(clean_train, Western %in% 1), aes(Western, revenue)) +
+    geom_boxplot()+
+  ylab("")+
+  theme(axis.text.x=element_blank(), axis.title.x = element_text(size = 8))+
+  theme(axis.text.y=element_blank())
+
+grid.newpage()
+
+a<-grid.draw(cbind(ggplotGrob(g11), ggplotGrob(g12),ggplotGrob(g13), ggplotGrob(g14),ggplotGrob(g15),ggplotGrob(g16),ggplotGrob(g17),ggplotGrob(g18),ggplotGrob(g19),ggplotGrob(g20), size = "last"))
+
+grid.newpage()
+
+b<-grid.draw(cbind(ggplotGrob(g21), ggplotGrob(g22),ggplotGrob(g23), ggplotGrob(g24),ggplotGrob(g25),ggplotGrob(g26),ggplotGrob(g27),ggplotGrob(g28),ggplotGrob(g29),ggplotGrob(g30),size = "last"))
+
+
+```
+
+<br/>
+
+Podemos apreciar que existen diferencias de **revenue** en cuanto a género se refiere. Se explorarán mejor estas diferencias en el modelo de regresión lineal.  
+  
+> Variable ***Mes***
+
+```{r Boxplot_Mes, echo=F, fig.height=4, fig.width=7}
+
+# Cambiamos el orden de los niveles para que se corresponda con el orden natural del año
+
+clean_train$mes<- factor(clean_train$mes, levels = c("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+             "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"))
+
+ggplot(clean_train, aes(mes, revenue, fill=mes)) +
+  geom_boxplot()+
+  theme(axis.text.x=element_blank())
+
+```
+
+Podemos apreciar que existen ciertas diferencias de **revenue** en cuanto al mes de estreno. En junio, julio y en diciembre parece que sube la recaudación con respecto al resto de meses. Se explorarán mejor estas diferencias en el modelo de regresión lineal. 
+
+> Variable ***Year***
+
+Hacemos un boxplot para el conjunto de todos los años.
+
+```{r Boxplot_Año, echo=F, fig.height=4, fig.width=7}
+
+g2<-ggplot(data = clean_train) +
+
+  geom_boxplot(mapping = aes(group=clean_train$year, x = clean_train$year, y = clean_train$revenue)) +
+
+  labs(x="Año", y="Revenue", title="Revenue por Año")
+
+g2
+
+```
+
+No se visualiza correctamente dada la gran cantidad de años existentes así que filtramos los años a partir del 2000 para ver si podemos sacar conclusiones fijándonos en las dos últimas décadas.
+
+```{r Boxplot_Año2, echo=F,fig.height=4, fig.width=7}
+
+clean_train2<-clean_train[clean_train$year>=2000,]
+
+g3<-ggplot(data = clean_train2) +
+
+  geom_boxplot(mapping = aes(group=clean_train2$year, x = clean_train2$year, y = clean_train2$revenue)) +
+
+  labs(x="Años", y="Revenue", title="Revenue de los últimos Años ")
+
+g3
+
+```
+
+Por último y para contrastar el gráfico anterior sacamos las medias de *revenue** por año para ver la evolución de la recaudación de las películas a lo largo del tiempo.
+
+```{r Boxplot_Año3, echo=F, fig.height=4, fig.width=7}
+
+medias<-c()
+
+years<-c(sort(unique(clean_train$year)))
+
+for (i in years) {medias<-c(medias, mean(clean_train$revenue[clean_train$year==i]))}
+
+plot(years, medias, main="Revenue Medio por Año", xlab="Año", ylab="Revenue Medio")
+```
+
+Podemos apreciar que existe una tendencia a aumentar la recaudación a medida que pasan los años. Quizás esto  no se deba a un aumento de los espectadores y sólo sea debido al aumento del precio de la entrada. Se explorarán mejor estas diferencias en el modelo de regresión lineal. 
+
+
+* **Contrastes de hipótesis**: contraste de hipótesis para la media: Student T-test, ANOVA 
+
+¿Existen diferencias entre las medias de **revenue** atendiendo a los diferentes niveles de las variables?
+
+Hemos visto que ninguna de las variables presenta una distribución normal, pero al contar con una muestra grande (>30), por el Teorema del Límite Central, podemos aproximar la distribución de las medias muestrales a una normal.
+
+Por otro lado hemos comprobado que no existía homogeneidad de varianza para ninguna variable. Esto tiene como consecuencias que en el caso de las variables con 2 niveles debamos utilizar como parámetro `var.equal=FALSE` cuando hagamos el test T de Student. Para el caso de variables con más de 2 niveles, al igual que pasa con la asunción de normalidad, el no cumplimiento de la homoscedasticidad no afectaría de forma sensible el contraste del estadístico F del test paramétrico ANOVA si, por un lado, la muestra es grande (>30) y, por otro, si los grupos tienen aproximadamente el mismo tamaño.
+
+Con lo cual, para la única variable con más de 2 niveles (**mes**) comprobamos si el tamaño de los grupos es similar.
+
+```{r, echo=F}
+table(clean_train$mes)
+```
+
+Podemos decir que los tamaños son similares por lo que procedemos a realizar un test ANOVA.
+
+**Test ANOVA**
+
+Contraste de hipótesis:
+
+1. Hipótesis nula: 
+
+$H_0$: Las medias de los distintos grupos son iguales: $\mu_1 = \mu_2 = ... \mu_n$ para 'n' niveles de la variable.
+
+2. Hipótesis alternativa:
+
+$H_1:$: No todas las medias son iguales: $\mu_i \neq \mu_j$ para algún $i,j$
+
+
+> Variable ***mes***
+
+```{r Anova_mes, echo=F}
+aov.mes<-summary(aov(revenue~mes, data=clean_train))
+aov.mes
+
+pvalue.mes<-aov.mes[[1]][["Pr(>F)"]][1]
+```
+
+Observamos que el valor de F es superior a 1. Además, como vemos que la probabilidad asociada al estadístico (**`r pvalue.mes`**) es menor que un nivel de significación del 0.05 podemos concluir que hay diferencias entre las medias de los distintos grupos, con lo cual podemos decir que el hecho de que se estrene la película en un determinado mes  (**mes**) sí influye en la recaudación (**revenue**).
+
+**Test T de Student**
+
+Para el resto de variables utilizaremos el `t.test()`.
+
+> Variable ***collection***
+
+El contraste de hipótesis para cada una de las variables sería el siguiente:
+
+1. Hipótesis nula: 
+
+$H_0: \mu_1 - \mu_2 = 0$
+
+2. Hipótesis alternativa:
+
+$H_1: \mu_1 - \mu_2 \neq 0$
+
+Aplicaríamos un contraste de hipótesis de tipo bilateral, es decir que la hipótesis alternativa engloba tanto el caso $\mu_1 > \mu_2$ como $\mu_1 < \mu_2$, contaríamos con $n_1 + n_2 - 2$ grados de libertad.
+
+Utilizaremos un nivel de significación $\alpha$ de 0.05, que sería el error máximo de tipo I (aceptar la hipótesis nula siendo ésta falsa) que estaríamos dispuestos as asumir
+
+<br/>
+
+```{r Ttest_collection, echo=F}
+
+t.collection<-t.test(clean_train$revenue~clean_train$collection, var.equal=FALSE, conf.level=0.95)
+t.collection
+pvalue.collection<-t.collection$p.value
+
+```
+
+Observamos que el p-valor (**`r pvalue.collection`**) es menor que un nivel de significación del 0.05 podemos concluir que hay diferencias entre las medias de los distintos grupos, con lo cual podemos decir que el hecho de que la película pertenezca o no a una saga (**collection**) sí influye en la recaudación (**revenue**).
+
+> Variable ***english_speaking***
+
+```{r Ttest_english, echo=F}
+t.language<-t.test(clean_train$revenue~clean_train$english_speaking, var.equal=FALSE, conf.level=0.95)
+t.language
+pvalue.language<-t.language$p.value
+```
+
+Observamos que el p-valor (**`r pvalue.language`**) es menor que un nivel de significación del 0.05 podemos concluir que hay diferencias entre las medias de los distintos grupos, con lo cual podemos decir que el hecho de que el idioma original de la la película  (**english_speaking**) sea o no el inglés sí influye en la recaudación (**revenue**).
+
+> Variables: ***"Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western"***
+
+Habíamos encontrado homogeneidad de varianza sólo en 5 de los 20 géneros. Estos eran: **Music**, **Mystery**, **Thriller**, **War** y **Western**. Ajustaremos el parámetro `var.equal=TRUE` de `t.test()`para estos casos.
+
+
+```{r Ttest_genres, echo=F}
+
+t.action<-t.test(clean_train$revenue~clean_train$Action, var.equal=FALSE, conf.level=0.95)
+pvalue.action<-t.action$p.value
+
+t.adventure<-t.test(clean_train$revenue~clean_train$Adventure, var.equal=FALSE, conf.level=0.95)
+pvalue.adventure<-t.adventure$p.value
+
+t.animation<-t.test(clean_train$revenue~clean_train$Animation, var.equal=FALSE, conf.level=0.95)
+pvalue.animation<-t.animation$p.value
+
+t.comedy<-t.test(clean_train$revenue~clean_train$Comedy, var.equal=FALSE, conf.level=0.95)
+pvalue.comedy<-t.comedy$p.value
+
+t.crime<-t.test(clean_train$revenue~clean_train$Crime, var.equal=FALSE, conf.level=0.95)
+pvalue.crime<-t.crime$p.value
+
+t.doc<-t.test(clean_train$revenue~clean_train$Documentary, var.equal=FALSE, conf.level=0.95)
+pvalue.doc<-t.doc$p.value
+
+t.drama<-t.test(clean_train$revenue~clean_train$Drama, var.equal=FALSE, conf.level=0.95)
+pvalue.drama<-t.drama$p.value
+
+t.family<-t.test(clean_train$revenue~clean_train$Family, var.equal=FALSE, conf.level=0.95)
+pvalue.family<-t.family$p.value
+
+t.fantasy<-t.test(clean_train$revenue~clean_train$Fantasy, var.equal=FALSE, conf.level=0.95)
+pvalue.fantasy<-t.fantasy$p.value
+
+t.foreign<-t.test(clean_train$revenue~clean_train$Foreign, var.equal=FALSE, conf.level=0.95)
+pvalue.foreign<-t.foreign$p.value
+
+t.history<-t.test(clean_train$revenue~clean_train$History, var.equal=FALSE, conf.level=0.95)
+pvalue.history<-t.history$p.value
+
+t.horror<-t.test(clean_train$revenue~clean_train$Horror, var.equal=FALSE, conf.level=0.95)
+pvalue.horror<-t.horror$p.value
+
+t.music<-t.test(clean_train$revenue~clean_train$Music, var.equal=TRUE, conf.level=0.95)
+pvalue.music<-t.music$p.value
+
+t.mystery<-t.test(clean_train$revenue~clean_train$Mystery, var.equal=TRUE, conf.level=0.95)
+pvalue.mystery<-t.mystery$p.value
+
+t.romance<-t.test(clean_train$revenue~clean_train$Romance, var.equal=FALSE, conf.level=0.95)
+pvalue.romance<-t.romance$p.value
+
+t.scifi<-t.test(clean_train$revenue~clean_train$Science_Fiction, var.equal=FALSE, conf.level=0.95)
+pvalue.scifi<-t.scifi$p.value
+
+t.thriller<-t.test(clean_train$revenue~clean_train$Thriller, var.equal=TRUE, conf.level=0.95)
+pvalue.thriller<-t.thriller$p.value
+
+t.war<-t.test(clean_train$revenue~clean_train$War, var.equal=TRUE, conf.level=0.95)
+pvalue.war<-t.war$p.value
+
+t.western<-t.test(clean_train$revenue~clean_train$Western, var.equal=TRUE, conf.level=0.95)
+pvalue.western<-t.western$p.value
+
+footnote(kable_styling(kable(data.frame(vars=c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western"), pvalue=c(pvalue.action, pvalue.adventure,pvalue.animation,pvalue.comedy,pvalue.crime,pvalue.doc,pvalue.drama,pvalue.family,pvalue.fantasy,pvalue.foreign,pvalue.history,pvalue.horror,pvalue.music,pvalue.mystery,pvalue.romance,pvalue.scifi,pvalue.thriller,"NA",pvalue.war,pvalue.western),signif=c('**','**','**','*','','**','**','**','**','**','**','**','','','**','**','','','',''),genre.df2[2]))), general="** pvalor<0.01, * pvalor<0.05")
+
+```
+
+Observamos que el p-valor es menor que un nivel de significación del 0.05 en la mayoría de los géneros excepto para 'Crime', 'Music', 'Mystery','Thriller', 'War' y ' Western'. El resto de géneros parece que sí influye en la recaudación (**revenue**).
+
+`Nota: en el caso de 'Tv_movie' al haber sólo 1 caso con este tipo de género no se ha podido hacer el contraste`.
+
+# 5. Fichero de salida 
+
+Después de haber realizado todo el análisis y transformaciones necesarias al dataset original hemos obtenido uno nuevo que será el que utilicemos para plantear y evaluar un posible modelo de regresión y que se basará en las siguientes variables: 
+
+1. **X.U.FEFF.id**
+2. **title**
+3. **collection**
+4. **english_speaking**
+5. **budget**
+6. **budget_boxcox**
+7. **popularity**
+8. **popularity_boxcox**
+9. **runtime**
+10.**mes**
+11.**year**
+12. **productoras**
+13. **reparto**
+14. **produccion**
+15. **revenue**
+15. **revenue_boxcox**  
+16. **genres (las 20 variables binarias)**
+
+
+Este nuevo dataset transformado se vuelca al fichero **`r fichero.out`** adjunto al ejercicio. 
+
+```{r FicheroOut, echo=F}
+
+# DEBUG colnames(clean_train)
+
+final_train<-subset(clean_train, select = cols_out)
+
+write.csv(final_train,fichero.out, row.names = FALSE)
+```
+
+
+# 6. Modelo de regresión lineal generalizado
+
+El objetivo del proyecto es generar un modelo de predicción de la recaudación de las películas atendiendo a distintas variables. Para ello hemos elegido el modelo de regresión lineal para el cual utilizaremos la función `lm()`.
+
+Seleccionaremos las siguientes variables:
+
+- Variable dependiente: **revenue** (o **revenue_boxcox**)
+
+- Variables independientes:
+
+  >- Cuantitativas (6): **runtime**, **budget** (o **budget_boxcox**), **popularity**, **productoras**, **reparto**, **produccion**.
+  
+  >- Categóricas (24): **collection**, **english_speaking**, **mes**, **year**, **Action**, **Adventure**, **Animation**, **Comedy**, **Crime**, **Documentary**, **Drama**, **Family**, **Fantasy**, **Foreign** **History**, **Horror**, **Music**, **Mystery**, **Romance**, **Science_Fiction**, **Thriller**, **Tv_movie**, **War**, **Western**.
+  
+Generaremos distintos modelos y seleccionaremos aquel que se ajuste mejor a los datos. Para ello nos fijaremos en los residuos que genere el modelo (distribución, homogeneidad de la varianza), en el coeficiente de determinación ($R^2$), la raíz del error cuadrático medio ($RMSE$) y el p-valor global del modelo.
+
+## 6.1. Modelo sin las variables normalizadas
+
+Generamos un primer modelo con las variables **budget**, **popularity** y **revenue** sin normalizar y con los valores imputados de **budget** y **runtime**
+
+```{r Model1, echo=F, echo=FALSE}
+
+# Asignar las distintas columnas a variables para facilitar la carga del modelo lm() 
+
+vary<-names(clean_train['revenue'])
+
+vars1<-names(clean_train[c('budget','popularity','runtime', 'collection', 'english_speaking', 'mes', 'year', 'productoras', 'reparto', 'produccion')])
+
+vars2<-c(names(clean_train[c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western")]))
+
+# Generar la concatenación de variables para cargar en el modelo lm() 
+
+formula <- as.formula(paste(vary, '~', paste(vars1, collapse=' + ' ), ' + ', paste(vars2, collapse=' + ')))
+
+# Generar el modelo de regresión
+
+model1<-lm(formula,  data=clean_train)
+summary(model1)
+r1<-summary(model1)$adj.r.squared
+
+# Calculamos el estimador "RMSE" (Root Mean Squared Error)
+#https://stackoverflow.com/questions/26237688/rmse-root-mean-square-deviation-calculation-in-r
+
+RMSE = function(residuals){
+  sqrt(mean((residuals)^2))
+}
+
+rmse1<-RMSE(model1$residuals)
+
+```
+
+Observamos que el p-valor del modelo, asociado al estadístico F, es inferior a 0.05, lo cual nos llevaría a rechazar la hipótesis nula que nos dice que un modelo sin variables independientes se ajusta a los datos igual que lo hace nuestro modelo.
+
+Extraemos los distintos gráficos explicativos de los residuos para comprobar el patrón de estos.
+
+```{r Model1_Residuals, echo= F, fig.height=8, fig.width=8}
+# Generaramos los gráficos de residuos
+
+par(mfrow=c(2,2))
+plot(model1)
+
+```
+
+<br/>
+
+Por un lado observamos que la distribución no es normal a juzgar por el gráfico **Normal Q-Q** donde vemos que una buena parte de las observaciones no se encuentran sobre la recta. Además observamos heteroscedasticidad en gráfico **Scale-location**, es decir la varianza de los errores parece no ser constante a lo largo de los  valores estimados por el modelo ("Fitted values"). Estas dos situaciones podrían llevar a una pérdida de precisión en los coeficientes de regresión y a producir p-valores con valores menores de lo que realmente son.
+
+Para intentar logar un mejor ajuste del modelo procederemos a utilizar las variables **budget**, **popularity** y **revenue** transformadas anteriormente con el método `boxcox`.
+
+## 6.2. Modelo con las variables normalizadas
+
+Procedemos pues a utilizar las variables normalizadas **budget_boxcox**, **popularity_boxcox** y **revenue_boxcox** en un segundo modelo.
+
+```{r Model2, echo=F}
+
+# Asignar las distintas columnas a variables para facilitar la carga del modelo lm() 
+
+vary<-names(clean_train['revenue_boxcox'])
+
+vars1<-names(clean_train[c('budget_boxcox','popularity_boxcox','runtime', 'collection', 'english_speaking', 'mes', 'year', 'productoras', 'reparto', 'produccion')])
+
+vars2<-c(names(clean_train[c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western")]))
+
+
+# Generar la concatenación de variables para cargar en el modelo lm() 
+
+formula <- as.formula(paste(vary, '~', paste(vars1, collapse=' + ' ), ' + ', paste(vars2, collapse=' + ')))
+
+# Generar el modelo de regresión
+
+model2<-lm(formula,  data=clean_train)
+summary(model2)
+r2<-summary(model2)$adj.r.squared
+rmse2<-RMSE(model2$residuals)
+
+```
+
+Extraemos los distintos gráficos explicativos de los residuos para comprobar el patrón de estos.
+
+```{r Model2_Residuals, echo= F, fig.height=8, fig.width=8}
+# Generaramos los gráficos de residuos
+
+par(mfrow=c(2,2))
+plot(model2)
+
+```
+
+<br/>
+
+Observamos que la distribución de los residuos se aproxima a la normalidad después de la transformación de las variables. Prácticamente todas las observaciones están encima de la recta en el gráfico **Normal Q-Q**. 
+
+En cuanto a la homogeneidad de varianza (gráfico **Scale-Location**), observamos que ha mejorado bastante aunque no hemos conseguido del todo mantener la varianza constante a lo largo de todo el rango de valores. 
+
+Existen algunas observaciones extremas marcadas en el gráfico (casos 944, 29 y 2768) que podrían explicar que la varianza sea ligeramente diferente en el rango inferior de valores. Podremos probar a generar un modelo sin estos valores y ver si mejora la calidad.
+
+De ahora en adelante generaremos modelos con las variables transformadas ya que nos darán resultados más fiables y precisos.
+
+<br/>
+
+## 6.3. Modelo con variables normalizadas y sin los valores imputados de *budget*
+
+Queremos comprobar la calidad del modelo en el caso de no haber imputado los valores perdidos de **budget**, que recordemos que afectaban a `r nrow(clean_train[which(clean_train$budget_imp==TRUE),])` casos y que constituyen el 27% del total.
+
+```{r Model3, echo=F}
+
+# Genero un nuevo dataframe sin las filas con valores imputados
+
+df<-clean_train[which(clean_train$budget_imp==FALSE | clean_train$runtime==FALSE),]
+  
+# Asignar las distintas columnas a variables para facilitar la carga del modelo lm() 
+
+vary<-names(df['revenue_boxcox'])
+
+vars1<-names(df[c('budget_boxcox','popularity_boxcox','runtime', 'collection', 'english_speaking', 'mes', 'year', 'productoras', 'reparto', 'produccion')])
+
+vars2<-c(names(df[c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western")]))
+
+# Generar la concatenación de variables para cargar en el modelo lm() 
+
+formula <- as.formula(paste(vary, '~', paste(vars1, collapse=' + ' ), ' + ', paste(vars2, collapse=' + ')))
+
+# Generar el modelo de regresión
+
+model3<-lm(formula,  data=df)
+summary(model3)
+r3<-summary(model3)$adj.r.squared
+rmse3<-RMSE(model3$residuals)
+
+```
+
+<br/>
+
+## 6.4. Modelo con variables normalizadas, sin imputar y eliminado *outliers*
+
+Generamos un modelo eliminando los 3 outliers detectados en los gráficos de los residuos como valores que podrían estar alterando el ajuste del modelo. Corresponden a los casos 39, 944 y 276, que corresponden a las siguientes películas:
+
+```{r kable, echo=F}
+kable_styling(kable(clean_train[c(29,276,944),][c('X.U.FEFF.id','title','budget','revenue','runtime','popularity','year')]))
+```
+
+Generamos el modelo sin esas 3 películas:
+
+```{r Model4, echo=F}
+# Genero un nuevo dataframe eliminado los outliers de "budget" 
+
+df2<-clean_train[-c(29,944,2768),]
+
+# Seleccionamos sólo aquellos casos sin valores imputados de "budget"
+
+df2<-df2[which(df2$budget_imp==FALSE),]
+
+# Asignar las distintas columnas a variables para facilitar la carga del modelo lm() 
+
+vary<-names(df2['revenue_boxcox'])
+
+vars1<-names(df2[c('budget_boxcox','popularity_boxcox','runtime', 'collection', 'english_speaking', 'mes', 'year', 'productoras', 'reparto', 'produccion')])
+
+vars2<-c(names(df2[c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western")]))
+
+# Generar la concatenación de variables para cargar en el modelo lm() 
+
+formula <- as.formula(paste(vary, '~', paste(vars1, collapse=' + ' ), ' + ', paste(vars2, collapse=' + ')))
+
+# Generar el modelo de regresión
+
+model4<-lm(formula,  data=df2)
+summary(model4)
+r4<-summary(model4)$adj.r.squared
+rmse4<-RMSE(model4$residuals)
+
+```
+
+## 6.5. Modelo eliminando variables no significativas
+
+Generamos un modelo eliminando aquellas variables no significativas como son:
+**english_speaking** y **year**.
+
+```{r Model5, echo=F}
+
+# Asignar las distintas columnas a variables para facilitar la carga del modelo lm() 
+
+vary<-names(df2['revenue_boxcox'])
+
+vars1<-names(df2[c('budget_boxcox','popularity_boxcox','runtime', 'collection', 'mes', 'productoras', 'reparto', 'produccion')])
+
+vars2<-c(names(df2[c("Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Foreign", "History", "Horror", "Music", "Mystery", "Romance", "Science_Fiction", "Thriller", "Tv_movie", "War", "Western")]))
+
+# Generar la concatenación de variables para cargar en el modelo lm() 
+
+formula <- as.formula(paste(vary, '~', paste(vars1, collapse=' + ' ), ' + ', paste(vars2, collapse=' + ')))
+
+# Generar el modelo de regresión
+
+model5<-lm(formula,  data=df2)
+summary(model5)
+r5<-summary(model5)$adj.r.squared
+rmse5<-RMSE(model5$residuals)
+```
+
+
+<br/>
+
+# 7. Representación de los resultados a partir de tablas y gráficas
+
+Generamos una tabla para comparar los distintos modelos.
+
+
+```{r Modelo10, echo=F}
+
+kable_styling(kable(data.frame(modelos=c("model1", "model2", "model3", "model4", "model5"), var.normal=c("No", "Sí", "Sí", "Sí", "Sí"), var.imput=c("Sí", "Sí", "No", "No", "No"), outliers=c("Sí", "Sí","Sí","No", "No"), var.excl=c("-","-","-","-","english_speaking, year"), adj.r.squared=c(r1, r2, r3, r4,r5), rmse=c(rmse1, rmse2, rmse3, rmse4,rmse5))))
+
+```
+
+<br/>
+
+Al haber transformado variables los parámetros de $R^2$ y $RMSE$ no pueden utilizarse para comparar la calidad del primer modelo con el resto (<https://people.duke.edu/~rnau/rsquared.htm>), por lo que habiendo descartado el primer modelo debido a falta de normalidad y homoscedasticidad en los residuos, pasaremos a comparar la calidad de ajuste de los otros 4 modelos.
+
+En primer lugar, observamos que el p-valor asociado al estadístico F es significativo en todos los modelos generados, con lo cual las variables incluidas tienen un valor explicativo de la variable dependiente en todos ellos.
+
+En segundo lugar, sabemos que cuanto mayor es el valor de $R^2$ y menor sea el valor de $RMSE$, mayor variabilidad de los datos quedará explicada por el modelo. Observando los valores de todos los modelos generados, podemos decir que la calidad es aceptable, en torno al **60%** de la variabilidad de **revenue** quedaría explicada por las variables independientes incluidas en el modelo.
+
+Podemos decidir quedarnos con aquellos modelos que mayor valor de $R^2$ y menor valor de $RMSE$ tienen: el 4º o 5º modelo. Observamos que hay muy pocas diferencias cuando eliminamos del modelo las variables **english_speaking** y **year** (modelo 5) por lo que podemos conservarlas y decidir entonces seleccionar el modelo 4.
+
+Recordemos que en el modelo 4 hemos utilizado las variables normalizadas **budget_boxcox** y **revenue_boxcox**, hemos excluido los valores imputados para "budget" y hemos eliminado 3 casos extremos detectados en el análisis de los residuos.
+
+Entre las variables más significativas para explicar la recaudación se encuentran las cuantitativas **budget, popularity, produccion y productoras**, las cuales ya presentaban un grado de correlación moderado con **revenue** mientras que, entre las cualitativas, destaca **collection** que ya vimos también en el análisis visual y estadístico que había diferencias significativas en cuanto a si una película pertenecía a una saga o no.
+
+Aquí mostramos la tabla completa con las variables y sus p-valores ordenados de menor a  mayor.
+
+```{r Pvalues, echo=F}
+
+pvalor_budget<-round(summary(model4)$coefficients[,4][2],78)
+pvalor_popularity<-round(summary(model4)$coefficients[,4][3],43)
+pvalor_collection<-round(summary(model4)$coefficients[,4][5],41)
+pvalor_production<-round(summary(model4)$coefficients[,4][21],19)
+
+df.pval<-data.frame(summary(model4)$coefficients[,4])
+colnames(df.pval)<-'pvalues'
+df.pval$var <- rownames(df.pval)
+rownames(df.pval)<-c()
+df.pval<-df.pval[,c(2,1)]
+df.pval<-df.pval[order(df.pval$pvalues),]
+df.pval
+
+```
+
+<br/>
+
+# 8. Resolución del problema. 
+
+>A partir de los resultados obtenidos, ¿cuáles son las conclusiones? ¿Los resultados permiten responder al problema?  
+
+Como conclusión final podemos decir que el objetivo del presente proyecto consistía en generar un modelo de regresión lineal para predecir el valor de la recaudación de las películas en base a una serie de variables explicativas, para lo cual se han planteado distintos modelos derivados de diferentes combinaciones y transformaciones de éstas. Finalmente, el modelo elegido que nosotros elegiríamos de los que se han analizado sería el 4º  teniendo en cuenta los siguientes criterios:    
+  
+
+* El modelo planteado tiene una potencia de previsión media-alta basándonos en el coeficiente de determinación ajustado obtenido, $R^2$= **`r r4`**, y que consigue explicar aproximadamente  el **63%** de la variabilidad total de la recaudación en base a las variables independientes elegidas.  
+  
+* Además, los residuos del modelo presentan una distribución aproximada a la normal y una varianza bastante homogénea a lo largo de los valores predecidos, lo cual nos da una precisión fiable del modelo.  
+
+No obstante esta modelización no tiene porque ser la opción más óptima (*) y sólo representa una prueba de concepto de la capacidad de previsión que tienen los nuevos datos transformados de los originales y que éstos originalmente no tenían. Desde este punto de vista, efectivamente,  podemos decir que el ejercicio realizado consigue el objetivo prefijado inicialmente.
+
+
+`Nota: Posiblemente con más tiempo de análisis y recombinado las nuevas variables ( por ejemplo en otras dicotómicas entre generos populares-no populares ó meses optimos-no optimos para estrenos etc etc), eliminando variables poco significativas ó incorporando otras que hayamos podido obviar podríamos conseguir modelos más sencillos y mejores ratios de previsión que los ejemplos mostrados en este ejercicio`
+
+
+# 9. Tabla de contribuciones  
+  
+El ejercicio ha sido realizado por:
+
+
+```{r, echo=F}
+
+contrib<-tibble(
+  Contribuciones = c("Investigación previa", "Redacción de las respuestas", "Desarrollo código"),
+  Firma = c("Jon Ortiz, Gabriel Peso","Jon Ortiz, Gabriel Peso","Jon Ortiz, Gabriel Peso")
+)
+
+kable_styling(kable(contrib))
+
+```
+
+
+# 10. Recursos
+
+A continuación se listan los diferentes recursos utilizados para la realización del ejercicio.  
+
+**Origen del dataset**  
+  
++ https://www.kaggle.com/c/tmdb-box-office-prediction  
+  
+**Conversión de formato JSON**  
+  
++ https://www.kaggle.com/samstiyer/parsing-the-json-columns-in-r-tidy-approach 
+
+**Expresiones regulares**  
+  
++ https://stringr.tidyverse.org/articles/regular-expressions.html  
++	https://www.regextester.com/21
+
+
+**Transformación boxcox()**
+
++ https://rpubs.com/bskc/288328
++ https://www.rdocumentation.org/packages/forecast/versions/8.7/topics/BoxCox.lambda
+
+**Test de normalidad**
+
++ https://www.youtube.com/watch?v=_YOr_yYPytM
++ https://www.youtube.com/watch?v=vo9DssNQA4E
++ https://www.statisticssolutions.com/normality/
++ https://data.library.virginia.edu/normality-assumption/
+
+**Test de homogeneidad de varianzas**
+
++ https://www.statisticssolutions.com/homoscedasticity/
++ https://biostats.w.uib.no/test-for-homogeneity-of-variances-levenes-test/
++ https://www.statisticshowto.datasciencecentral.com/levene-test/
++ https://stats.libretexts.org/Bookshelves/Biostatistics/Book%3A_Biological_Statistics_(McDonald)/4.0/4.05%3A_Homoscedasticity_and_Heteroscedasticity
+
+**Test de correlación**
+
++ https://www.researchgate.net/post/Is_Pearsons_Correlation_coefficient_appropriate_for_non-normal_data
++ https://www.statisticssolutions.com/pearson-correlation-assumptions/
++ https://www.statisticshowto.datasciencecentral.com/kendalls-tau/
++ https://www.youtube.com/watch?v=D56dvoVrBBE
++ https://www.statsdirect.com/help/nonparametric_methods/kendall_correlation.htm
+
+**Contraste de hipótesis: T-test**
+
++ https://www.rdocumentation.org/packages/stats/versions/3.6.0/topics/t.test
++ https://www.r-bloggers.com/two-sample-students-t-test-1/
+
+**Contraste de hipótesis: ANOVA test**
+
++ http://www.sthda.com/english/wiki/two-way-anova-test-in-r
++ https://www.r-bloggers.com/two-way-analysis-of-variance-anova/
++ https://rcompanion.org/rcompanion/d_08.html
++ https://www.researchgate.net/post/One-Way_ANOVA_or_Kruskal_Wallis_which_one_should_I_use
++ https://www.statmethods.net/stats/anova.html
++ https://arc.lib.montana.edu/book/statistics-with-r-textbook/item/56
++ https://www.r-bloggers.com/performing-anova-test-in-r-results-and-interpretation/
+
+**Modelos de regresión lineal múltiple (variables cuantitativas y cualitativas):**
+
++ Libro:"Regression analysis: An intuitive guide" (Jim Frost, 2019)
++ http://analyticspro.org/2016/03/15/r-tutorial-how-to-interpret-f-statistic-in-regression-models/
++ https://thestatsgeek.com/2014/01/25/r-squared-and-goodness-of-fit-in-linear-regression/
++ https://thestatsgeek.com/2013/08/07/assumptions-for-linear-regression/
++ https://www.theanalysisfactor.com/assessing-the-fit-of-regression-models/ 
++ https://www.kaggle.com/samstiyer/parsing-the-json-columns-in-r-tidy-
++ https://data.library.virginia.edu/diagnostic-plots/
+
